@@ -40,3 +40,14 @@ export interface EthTxReceipt {
   type: number;
   status?: EthTxStatus;
 }
+
+export interface EVMInfo {
+  chainId: number;
+  rpc: string;
+  websocket?: string;
+}
+
+export interface EthereumSignResponse {
+  signingData: Uint8Array;
+  signature: Uint8Array;
+}

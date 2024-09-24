@@ -17,8 +17,8 @@ import { AddressItem } from "../address-item";
 import SimpleBar from "simplebar-react";
 import styled, { useTheme } from "styled-components";
 import { FormattedMessage, useIntl } from "react-intl";
-import { Bech32Address } from "@keplr-wallet/cosmos";
 import { DenomHelper } from "@keplr-wallet/common";
+import { SearchTextInput } from "../input";
 
 type Type = "recent" | "contacts" | "accounts";
 
@@ -57,6 +57,19 @@ export const AddressBookModal: FunctionComponent<{
 
     const [type, setType] = useState<Type>("recent");
 
+    const [searchText, setSearchText] = useState("");
+    const [debounceTrimmedSearchText, setDebounceTrimmedSearchText] =
+      useState<string>("");
+    useEffect(() => {
+      const timer = setTimeout(() => {
+        setDebounceTrimmedSearchText(searchText.trim());
+      }, 300);
+
+      return () => {
+        clearTimeout(timer);
+      };
+    }, [searchText]);
+
     const [recents, setRecents] = useState<RecentSendHistory[]>([]);
     const [accounts, setAccounts] = useState<
       (Key & {
@@ -73,35 +86,46 @@ export const AddressBookModal: FunctionComponent<{
     }, [historyType, recipientConfig.chainId, uiConfigStore.addressBookConfig]);
 
     useEffect(() => {
-      uiConfigStore.addressBookConfig
-        .getVaultCosmosKeysSettled(
-          recipientConfig.chainId,
-          permitSelfKeyInfo ? undefined : keyRingStore.selectedKeyInfo?.id
-        )
-        .then((keys) => {
-          setAccounts(
-            keys
-              .filter((res) => {
-                return res.status === "fulfilled";
-              })
-              .map((res) => {
-                if (res.status === "fulfilled") {
-                  return res.value;
-                }
-                throw new Error("Unexpected status");
-              })
+      (() => {
+        if (type !== "accounts" || !debounceTrimmedSearchText) {
+          return uiConfigStore.addressBookConfig.getVaultCosmosKeysSettled(
+            recipientConfig.chainId,
+            permitSelfKeyInfo ? undefined : keyRingStore.selectedKeyInfo?.id
           );
-        });
+        } else {
+          return uiConfigStore.addressBookConfig.getVaultCosmosKeysWithSearchSettled(
+            debounceTrimmedSearchText,
+            recipientConfig.chainId,
+            permitSelfKeyInfo ? undefined : keyRingStore.selectedKeyInfo?.id
+          );
+        }
+      })().then((keys) => {
+        setAccounts(
+          keys
+            .filter((res) => {
+              return res.status === "fulfilled";
+            })
+            .map((res) => {
+              if (res.status === "fulfilled") {
+                return res.value;
+              }
+              throw new Error("Unexpected status");
+            })
+        );
+      });
     }, [
+      type,
       keyRingStore.selectedKeyInfo?.id,
       permitSelfKeyInfo,
       recipientConfig.chainId,
       uiConfigStore.addressBookConfig,
+      debounceTrimmedSearchText,
     ]);
 
     const chainInfo = chainStore.getChain(recipientConfig.chainId);
-    const isEvmChain = chainInfo.evm !== undefined;
-    const isErc20 = new DenomHelper(currency.coinMinimalDenom).type === "erc20";
+    const isEVMChain = chainStore.isEvmChain(chainInfo.chainId);
+    const isEVMOnlyChain = chainStore.isEvmOnlyChain(chainInfo.chainId);
+    const isERC20 = new DenomHelper(currency.coinMinimalDenom).type === "erc20";
 
     const datas: {
       timestamp?: number;
@@ -122,7 +146,7 @@ export const AddressBookModal: FunctionComponent<{
               };
             })
             .filter((recent) => {
-              if (isErc20 && !recent.address.startsWith("0x")) {
+              if (isERC20 && !recent.address.startsWith("0x")) {
                 return false;
               }
 
@@ -130,6 +154,10 @@ export const AddressBookModal: FunctionComponent<{
             });
         }
         case "contacts": {
+          const searchRegex = debounceTrimmedSearchText
+            ? new RegExp(debounceTrimmedSearchText, "i")
+            : null;
+
           return uiConfigStore.addressBookConfig
             .getAddressBook(recipientConfig.chainId)
             .map((addressData) => {
@@ -140,11 +168,18 @@ export const AddressBookModal: FunctionComponent<{
               };
             })
             .filter((contact) => {
-              if (isErc20 && !contact.address.startsWith("0x")) {
+              if (isERC20 && !contact.address.startsWith("0x")) {
                 return false;
               }
 
-              return true;
+              if (!searchRegex) {
+                return true;
+              }
+
+              return (
+                searchRegex.test(contact.name) ||
+                searchRegex.test(contact.address)
+              );
             });
         }
         case "accounts": {
@@ -153,7 +188,7 @@ export const AddressBookModal: FunctionComponent<{
           >((acc, account) => {
             const isSelf = keyRingStore.selectedKeyInfo?.id === account.vaultId;
 
-            if (!isErc20) {
+            if (!isERC20 && !isEVMOnlyChain) {
               acc.push({
                 name: account.name,
                 address: account.bech32Address,
@@ -161,13 +196,10 @@ export const AddressBookModal: FunctionComponent<{
               });
             }
 
-            if (isEvmChain) {
-              const hexAddress = Bech32Address.fromBech32(
-                account.bech32Address
-              ).toHex(true);
+            if (isEVMChain) {
               acc.push({
                 name: account.name,
-                address: hexAddress,
+                address: account.ethereumHexAddress,
                 isSelf,
               });
             }
@@ -182,7 +214,7 @@ export const AddressBookModal: FunctionComponent<{
     })();
 
     return (
-      <Modal isOpen={isOpen} close={close} align="bottom">
+      <Modal isOpen={isOpen} close={close} align="bottom" maxHeight="95vh">
         <Box
           backgroundColor={
             theme.mode === "light"
@@ -233,6 +265,21 @@ export const AddressBookModal: FunctionComponent<{
           </YAxis>
 
           <Gutter size="0.75rem" />
+
+          {type !== "recent" ? (
+            <React.Fragment>
+              <SearchTextInput
+                value={searchText}
+                onChange={(e) => {
+                  setSearchText(e.target.value);
+                }}
+                placeholder={intl.formatMessage({
+                  id: "components.address-book-modal.my-account-tab.input.search.placeholder",
+                })}
+              />
+              <Gutter size="0.75rem" />
+            </React.Fragment>
+          ) : null}
 
           {datas.length > 0 ? (
             <SimpleBar

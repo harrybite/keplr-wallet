@@ -26,7 +26,13 @@ import {
   FocusedScreenProvider,
   useFocusedScreen,
 } from './provider/focused-screen';
-import {WalletIcon, BrowserIcon, SettingIcon} from './components/icon';
+import {
+  BrowserIcon,
+  SettingIcon,
+  HomeFilledIcon,
+  HomeOutlinedIcon,
+  SettingOutlinedIcon,
+} from './components/icon';
 import {
   HomeScreenHeaderTitle,
   defaultHeaderOptions,
@@ -109,18 +115,23 @@ import {
   DecryptedKeyRingDatasResponse,
 } from './screen/register/import-from-extension';
 import {SwapIcon} from './components/icon/swap.tsx';
+import {IBCSwapScreen} from './screen/ibc-swap';
 import {IBCSwapDestinationSelectAssetScreen} from './screen/ibc-swap/select-asset';
 import {EditFavoriteUrlScreen} from './screen/web/edit-favorite';
 import {SearchUrlScreen} from './screen/web/search';
 import {FavoriteUrl} from './stores/webpage/types.ts';
 import {Text} from 'react-native';
+import {ActivitiesScreen} from './screen/activities';
+import {DocumentFillIcon} from './components/icon/document-fill.tsx';
+import {DocumentOutlinedIcon} from './components/icon/document-outliend.tsx';
+import {TokenDetailScreen} from './screen/token-detail';
 
 type DefaultRegisterParams = {
   hideBackButton?: boolean;
 };
 
 export type RootStackParamList = {
-  Home: undefined;
+  Home?: {showAddressChainId?: string};
   'Home.Main': undefined;
   'Home.Stake.Dashboard': {chainId: string};
   Camera?: {
@@ -332,6 +343,11 @@ export type RootStackParamList = {
     initialGasAmount?: string;
     initialGasAdjustment?: string;
     tempSwitchAmount?: string;
+  };
+  Activities: undefined;
+  TokenDetail: {
+    chainId: string;
+    coinMinimalDenom: string;
   };
 };
 
@@ -577,6 +593,12 @@ const DrawerBottomTabLabel: FunctionComponent<{
           {intl.formatMessage({id: 'bottom-tabs.settings'})}
         </Text>
       );
+    case 'Activities':
+      return (
+        <Text style={{color}}>
+          {intl.formatMessage({id: 'bottom-tabs.activity'})}
+        </Text>
+      );
   }
 
   return <></>;
@@ -597,6 +619,7 @@ export const MainTabNavigation: FunctionComponent = () => {
     if (
       focusedScreen.name !== 'Home' &&
       focusedScreen.name !== 'Swap' &&
+      focusedScreen.name !== 'Activities' &&
       isDrawerOpen
     ) {
       navigation.dispatch(DrawerActions.toggleDrawer());
@@ -607,17 +630,31 @@ export const MainTabNavigation: FunctionComponent = () => {
     <Tab.Navigator
       screenOptions={({route}) => ({
         // eslint-disable-next-line react/no-unstable-nested-components
-        tabBarIcon: ({color}) => {
-          const size = 24;
+        tabBarIcon: ({focused, color}) => {
+          const size = 28;
           switch (route.name) {
             case 'Home':
-              return <WalletIcon size={size} color={color} />;
+              return focused ? (
+                <HomeFilledIcon size={size} color={color} />
+              ) : (
+                <HomeOutlinedIcon size={size} color={color} />
+              );
             case 'Swap':
               return <SwapIcon size={size} color={color} />;
             case 'WebTab':
               return <BrowserIcon size={size} color={color} />;
             case 'Settings':
-              return <SettingIcon size={size} color={color} />;
+              return focused ? (
+                <SettingIcon size={size} color={color} />
+              ) : (
+                <SettingOutlinedIcon size={size} color={color} />
+              );
+            case 'Activities':
+              return focused ? (
+                <DocumentFillIcon size={size} color={color} />
+              ) : (
+                <DocumentOutlinedIcon size={size} color={color} />
+              );
           }
         },
         tabBarLabel: ({color}) =>
@@ -641,18 +678,26 @@ export const MainTabNavigation: FunctionComponent = () => {
         }}
         component={HomeScreen}
       />
-      {/*<Tab.Screen*/}
-      {/*  name="Swap"*/}
-      {/*  options={{*/}
-      {/*    headerTitle: HomeScreenHeaderTitleFunc,*/}
-      {/*    ...homeHeaderOptions,*/}
-      {/*  }}*/}
-      {/*  component={IBCSwapScreen}*/}
-      {/*/>*/}
+      <Tab.Screen
+        name="Swap"
+        options={{
+          headerTitle: HomeScreenHeaderTitleFunc,
+          ...homeHeaderOptions,
+        }}
+        component={IBCSwapScreen}
+      />
       <Tab.Screen
         name="WebTab"
         options={{headerShown: false}}
         component={WebNavigation}
+      />
+      <Tab.Screen
+        name="Activities"
+        options={{
+          headerTitle: HomeScreenHeaderTitleFunc,
+          ...homeHeaderOptions,
+        }}
+        component={ActivitiesScreen}
       />
       <Tab.Screen
         name="Settings"
@@ -1279,6 +1324,7 @@ export const AppNavigation: FunctionComponent = observer(() => {
             }}
             component={IBCSwapDestinationSelectAssetScreen}
           />
+          <Stack.Screen name="TokenDetail" component={TokenDetailScreen} />
         </Stack.Navigator>
 
         <DeepLinkNavigationComponent />
@@ -1329,6 +1375,15 @@ export const DeepLinkNavigationComponent: FunctionComponent = observer(() => {
               });
               break;
             }
+            case 'Coinbase.ShowAddress': {
+              navigation.navigate('Home', {
+                showAddressChainId: deepLinkStore.needToNavigation.params[
+                  'showAddressChainId'
+                ] as string,
+              });
+
+              break;
+            }
             case 'Staking.ValidateDetail': {
               navigation.navigate('Stake', {
                 screen: 'Stake.ValidateDetail',
@@ -1339,6 +1394,16 @@ export const DeepLinkNavigationComponent: FunctionComponent = observer(() => {
                   validatorAddress: deepLinkStore.needToNavigation.params[
                     'validatorAddress'
                   ] as string,
+                },
+              });
+              break;
+            }
+
+            case 'Web.WebPage': {
+              navigation.navigate('WebTab', {
+                screen: 'Web.WebPage',
+                params: {
+                  url: deepLinkStore.needToNavigation.params['url'] as string,
                 },
               });
               break;

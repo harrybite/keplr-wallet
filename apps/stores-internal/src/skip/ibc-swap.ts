@@ -214,7 +214,7 @@ export class ObservableQueryIbcSwap extends HasMapStore<ObservableQueryIBCSwapIn
 
           const destinationCurrency = this.chainStore
             .getChain(asset.chainId)
-            .findCurrency(asset.denom);
+            .findCurrencyWithoutReaction(asset.denom);
 
           if (!destinationCurrency) {
             return false;
@@ -289,7 +289,7 @@ export class ObservableQueryIbcSwap extends HasMapStore<ObservableQueryIBCSwapIn
               return false;
             }
 
-            const reversedPaths = destinationCurrency.paths.reverse();
+            const reversedPaths = destinationCurrency.paths.slice().reverse();
             for (let i = 0; i < reversedPaths.length; i++) {
               const reversedPath = reversedPaths[i];
               channels.push({
@@ -366,7 +366,7 @@ export class ObservableQueryIbcSwap extends HasMapStore<ObservableQueryIBCSwapIn
     const swapChainInfo = this.chainStore.getChain(this.swapVenue.chainId);
 
     const queryAssets = this.queryAssets.getAssets(swapChainInfo.chainId);
-    const assets = queryAssets.assets;
+    const assets = queryAssets.assetsOnlySwapUsages;
 
     // Key is chain identifier
     const res = new Map<
@@ -396,7 +396,7 @@ export class ObservableQueryIbcSwap extends HasMapStore<ObservableQueryIBCSwapIn
 
       const currency = this.chainStore
         .getChain(chainId)
-        .findCurrency(asset.denom);
+        .findCurrencyWithoutReaction(asset.denom);
 
       if (currency) {
         // If ibc currency is well known.

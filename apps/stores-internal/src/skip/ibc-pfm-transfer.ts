@@ -87,10 +87,10 @@ export class ObservableQueryIbcPfmTransfer {
 
               const currency = this.chainStore
                 .getChain(chainId)
-                .findCurrency(denom);
+                .findCurrencyWithoutReaction(denom);
               const destinationCurrency = this.chainStore
                 .getChain(asset.chainId)
-                .findCurrency(asset.denom);
+                .findCurrencyWithoutReaction(asset.denom);
 
               if (
                 currency &&
@@ -183,7 +183,9 @@ export class ObservableQueryIbcPfmTransfer {
                     continue;
                   }
 
-                  const reversedPaths = destinationCurrency.paths.reverse();
+                  const reversedPaths = destinationCurrency.paths
+                    .slice()
+                    .reverse();
                   for (let i = 0; i < reversedPaths.length; i++) {
                     const reversedPath = reversedPaths[i];
                     channels.push({

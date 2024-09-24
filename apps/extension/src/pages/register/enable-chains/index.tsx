@@ -41,6 +41,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { Tag } from "../../../components/tag";
 import SimpleBar from "simplebar-react";
 import { useTheme } from "styled-components";
+import { dispatchGlobalEventExceptSelf } from "../../../utils/global-events";
 
 /**
  * EnableChainsScene은 finalize-key scene에서 선택한 chains를 활성화하는 scene이다.
@@ -315,7 +316,7 @@ export const EnableChainsScene: FunctionComponent<{
         const enabledChainIdentifiers: string[] =
           chainStore.enabledChainIdentifiers;
 
-        // noble도 default로 활성화되어야 한다.
+        // noble과 ethereum도 default로 활성화되어야 한다.
         // 근데 enable-chains가 처음 register일때가 아니라
         // manage chain visibility로부터 왔을수도 있다
         // 이 경우 candidateAddresses의 length는 로직상 0일 수밖에 없기 때문에
@@ -331,11 +332,20 @@ export const EnableChainsScene: FunctionComponent<{
           ) {
             enabledChainIdentifiers.push("noble");
           }
+
+          if (
+            chainStore.chainInfos.find((c) => c.chainIdentifier === "eip155:1")
+          ) {
+            enabledChainIdentifiers.push("eip155:1");
+          }
         }
 
         for (const candidateAddress of candidateAddresses) {
           const queries = queriesStore.get(candidateAddress.chainId);
           const chainInfo = chainStore.getChain(candidateAddress.chainId);
+          const mainCurrency =
+            chainInfo.stakeCurrency || chainInfo.currencies[0];
+          const account = accountStore.getAccount(chainInfo.chainId);
 
           // hideInUI인 chain은 UI 상에서 enable이 되지 않아야한다.
           // 정말 만약의 수로 왜인지 그 체인에 유저가 자산등을 가지고 있을수도 있으니
@@ -354,14 +364,20 @@ export const EnableChainsScene: FunctionComponent<{
           for (const bech32Address of candidateAddress.bech32Addresses) {
             // Check that the account has some assets or delegations.
             // If so, enable it by default
-            const queryBalance = queries.queryBalances
-              .getQueryBech32Address(bech32Address.address)
-              .getBalance(chainInfo.stakeCurrency || chainInfo.currencies[0]);
+            const isEVMOnlyChain = chainStore.isEvmOnlyChain(chainInfo.chainId);
+            const queryBalance = isEVMOnlyChain
+              ? queries.queryBalances.getQueryEthereumHexAddress(
+                  account.ethereumHexAddress
+                )
+              : queries.queryBalances.getQueryBech32Address(
+                  account.bech32Address
+                );
+            const balance = queryBalance.getBalance(mainCurrency);
 
-            if (queryBalance?.response?.data) {
+            if (balance?.response?.data) {
               // A bit tricky. The stake coin is currently only native, and in this case,
               // we can check whether the asset exists or not by checking the response.
-              const data = queryBalance.response.data as any;
+              const data = balance.response.data as any;
               if (
                 data.balances &&
                 Array.isArray(data.balances) &&
@@ -383,15 +399,22 @@ export const EnableChainsScene: FunctionComponent<{
                 enabledChainIdentifiers.push(chainInfo.chainIdentifier);
                 break;
               }
+
+              if (isEVMOnlyChain && balance.balance.toDec().gt(new Dec(0))) {
+                enabledChainIdentifiers.push(chainInfo.chainIdentifier);
+                break;
+              }
             }
 
-            const queryDelegations =
-              queries.cosmos.queryDelegations.getQueryBech32Address(
-                bech32Address.address
-              );
-            if (queryDelegations.delegationBalances.length > 0) {
-              enabledChainIdentifiers.push(chainInfo.chainIdentifier);
-              break;
+            if (!isEVMOnlyChain) {
+              const queryDelegations =
+                queries.cosmos.queryDelegations.getQueryBech32Address(
+                  bech32Address.address
+                );
+              if (queryDelegations.delegationBalances.length > 0) {
+                enabledChainIdentifiers.push(chainInfo.chainIdentifier);
+                break;
+              }
             }
           }
         }
@@ -502,38 +525,48 @@ export const EnableChainsScene: FunctionComponent<{
       const aBalance = (() => {
         const addresses = candidateAddressesMap.get(a.chainIdentifier);
         const chainInfo = chainStore.getChain(a.chainId);
+        const queries = queriesStore.get(a.chainId);
+
+        const mainCurrency = chainInfo.stakeCurrency || chainInfo.currencies[0];
+        const account = accountStore.getAccount(chainInfo.chainId);
+
         if (addresses && addresses.length > 0) {
-          const queryBal = queriesStore
-            .get(a.chainId)
-            .queryBalances.getQueryBech32Address(addresses[0].address)
-            .getBalance(chainInfo.stakeCurrency || chainInfo.currencies[0]);
-          if (queryBal) {
-            return queryBal.balance;
+          const queryBalance = chainStore.isEvmOnlyChain(chainInfo.chainId)
+            ? queries.queryBalances.getQueryEthereumHexAddress(
+                account.ethereumHexAddress
+              )
+            : queries.queryBalances.getQueryBech32Address(addresses[0].address);
+          const balance = queryBalance.getBalance(mainCurrency)?.balance;
+
+          if (balance) {
+            return balance;
           }
         }
 
-        return new CoinPretty(
-          chainInfo.stakeCurrency || chainInfo.currencies[0],
-          "0"
-        );
+        return new CoinPretty(mainCurrency, "0");
       })();
       const bBalance = (() => {
         const addresses = candidateAddressesMap.get(b.chainIdentifier);
         const chainInfo = chainStore.getChain(b.chainId);
+        const queries = queriesStore.get(b.chainId);
+
+        const mainCurrency = chainInfo.stakeCurrency || chainInfo.currencies[0];
+        const account = accountStore.getAccount(chainInfo.chainId);
+
         if (addresses && addresses.length > 0) {
-          const queryBal = queriesStore
-            .get(b.chainId)
-            .queryBalances.getQueryBech32Address(addresses[0].address)
-            .getBalance(chainInfo.stakeCurrency || chainInfo.currencies[0]);
-          if (queryBal) {
-            return queryBal.balance;
+          const queryBalance = chainStore.isEvmOnlyChain(chainInfo.chainId)
+            ? queries.queryBalances.getQueryEthereumHexAddress(
+                account.ethereumHexAddress
+              )
+            : queries.queryBalances.getQueryBech32Address(addresses[0].address);
+          const balance = queryBalance.getBalance(mainCurrency)?.balance;
+
+          if (balance) {
+            return balance;
           }
         }
 
-        return new CoinPretty(
-          chainInfo.stakeCurrency || chainInfo.currencies[0],
-          "0"
-        );
+        return new CoinPretty(mainCurrency, "0");
       })();
 
       const aPrice = priceStore.calculatePrice(aBalance)?.toDec() ?? new Dec(0);
@@ -556,12 +589,27 @@ export const EnableChainsScene: FunctionComponent<{
 
       let numSelected = 0;
       for (const enabledChainIdentifier of enabledChainIdentifiers) {
-        if (chainInfoMap.has(enabledChainIdentifier)) {
-          numSelected++;
+        const enabledChainInfo = chainInfoMap.get(enabledChainIdentifier);
+        if (enabledChainInfo) {
+          const isEthermintLike =
+            enabledChainInfo.bip44.coinType === 60 ||
+            !!enabledChainInfo.features?.includes("eth-address-gen") ||
+            !!enabledChainInfo.features?.includes("eth-key-sign");
+
+          if (
+            (fallbackEthereumLedgerApp && isEthermintLike) ||
+            (!fallbackEthereumLedgerApp && !isEthermintLike)
+          ) {
+            numSelected++;
+          }
         }
       }
       return numSelected;
-    }, [chainStore.chainInfos, enabledChainIdentifiers]);
+    }, [
+      chainStore.chainInfos,
+      enabledChainIdentifiers,
+      fallbackEthereumLedgerApp,
+    ]);
 
     const replaceToWelcomePage = () => {
       if (skipWelcome) {
@@ -626,19 +674,27 @@ export const EnableChainsScene: FunctionComponent<{
           <Stack gutter="0.5rem">
             {chainInfos.map((chainInfo) => {
               const account = accountStore.getAccount(chainInfo.chainId);
-
               const queries = queriesStore.get(chainInfo.chainId);
+              const mainCurrency =
+                chainInfo.stakeCurrency || chainInfo.currencies[0];
 
               const balance = (() => {
-                const currency =
-                  chainInfo.stakeCurrency || chainInfo.currencies[0];
-                const queryBal = queries.queryBalances
-                  .getQueryBech32Address(account.bech32Address)
-                  .getBalance(currency);
-                if (queryBal) {
-                  return queryBal.balance;
+                const queryBalance = chainStore.isEvmOnlyChain(
+                  chainInfo.chainId
+                )
+                  ? queries.queryBalances.getQueryEthereumHexAddress(
+                      account.ethereumHexAddress
+                    )
+                  : queries.queryBalances.getQueryBech32Address(
+                      account.bech32Address
+                    );
+                const balance = queryBalance.getBalance(mainCurrency);
+
+                if (balance) {
+                  return balance.balance;
                 }
-                return new CoinPretty(currency, "0");
+
+                return new CoinPretty(mainCurrency, "0");
               })();
 
               const enabled =
@@ -726,75 +782,71 @@ export const EnableChainsScene: FunctionComponent<{
           </Stack>
         </SimpleBar>
 
-        {!fallbackEthereumLedgerApp ? (
-          <React.Fragment>
-            <Gutter size="1.25rem" />
+        <React.Fragment>
+          <Gutter size="1.25rem" />
 
-            <YAxis alignX="center">
-              <Box
-                alignX="center"
-                cursor="pointer"
-                onClick={(e) => {
-                  e.preventDefault();
+          <YAxis alignX="center">
+            <Box
+              alignX="center"
+              cursor="pointer"
+              onClick={(e) => {
+                e.preventDefault();
 
-                  if (
-                    chainInfos.length === enabledChainIdentifiersInPage.length
-                  ) {
-                    if (preSelectedChainIdentifiers.length > 0) {
-                      setEnabledChainIdentifiers(preSelectedChainIdentifiers);
-                    } else {
-                      if (chainInfos.length > 0) {
-                        setEnabledChainIdentifiers([
-                          chainInfos[0].chainIdentifier,
-                        ]);
-                      }
-                    }
+                if (
+                  chainInfos.length === enabledChainIdentifiersInPage.length
+                ) {
+                  if (preSelectedChainIdentifiers.length > 0) {
+                    setEnabledChainIdentifiers(preSelectedChainIdentifiers);
                   } else {
-                    setPreSelectedChainIdentifiers([
-                      ...enabledChainIdentifiers,
-                    ]);
-                    const newEnabledChainIdentifiers: string[] =
-                      enabledChainIdentifiers.slice();
-                    for (const chainInfo of chainInfos) {
-                      if (
-                        !newEnabledChainIdentifiers.includes(
-                          chainInfo.chainIdentifier
-                        )
-                      ) {
-                        newEnabledChainIdentifiers.push(
-                          chainInfo.chainIdentifier
-                        );
-                      }
+                    if (chainInfos.length > 0) {
+                      setEnabledChainIdentifiers([
+                        chainInfos[0].chainIdentifier,
+                      ]);
                     }
-                    setEnabledChainIdentifiers(newEnabledChainIdentifiers);
                   }
-                }}
-              >
-                <XAxis alignY="center">
-                  <Body2
-                    color={
-                      theme.mode === "light"
-                        ? ColorPalette["gray-200"]
-                        : ColorPalette["gray-300"]
+                } else {
+                  setPreSelectedChainIdentifiers([...enabledChainIdentifiers]);
+                  const newEnabledChainIdentifiers: string[] =
+                    enabledChainIdentifiers.slice();
+                  for (const chainInfo of chainInfos) {
+                    if (
+                      !newEnabledChainIdentifiers.includes(
+                        chainInfo.chainIdentifier
+                      )
+                    ) {
+                      newEnabledChainIdentifiers.push(
+                        chainInfo.chainIdentifier
+                      );
                     }
-                  >
-                    <FormattedMessage id="text-button.select-all" />
-                  </Body2>
+                  }
+                  setEnabledChainIdentifiers(newEnabledChainIdentifiers);
+                }
+              }}
+            >
+              <XAxis alignY="center">
+                <Body2
+                  color={
+                    theme.mode === "light"
+                      ? ColorPalette["gray-200"]
+                      : ColorPalette["gray-300"]
+                  }
+                >
+                  <FormattedMessage id="text-button.select-all" />
+                </Body2>
 
-                  <Gutter size="0.25rem" />
+                <Gutter size="0.25rem" />
 
-                  <Checkbox
-                    size="small"
-                    checked={
-                      chainInfos.length === enabledChainIdentifiersInPage.length
-                    }
-                    onChange={() => {}}
-                  />
-                </XAxis>
-              </Box>
-            </YAxis>
-          </React.Fragment>
-        ) : null}
+                <Checkbox
+                  size="small"
+                  checked={
+                    chainInfos.length === enabledChainIdentifiersInPage.length
+                  }
+                  onChange={() => {}}
+                />
+              </XAxis>
+            </Box>
+          </YAxis>
+        </React.Fragment>
 
         <Gutter size="1.25rem" />
         <Box width="22.5rem" marginX="auto">
@@ -880,6 +932,11 @@ export const EnableChainsScene: FunctionComponent<{
                 })(),
               ]);
 
+              dispatchGlobalEventExceptSelf(
+                "keplr_enabled_chain_changed",
+                vaultId
+              );
+
               if (needFinalizeCoinType.length > 0) {
                 sceneMovedToSelectDerivation.current = true;
                 sceneTransition.replace("select-derivation-path", {
@@ -915,6 +972,10 @@ export const EnableChainsScene: FunctionComponent<{
                     if (keyInfo.insensitive["Ethereum"]) {
                       await chainStore.enableChainInfoInUI(
                         ...ledgerEthereumAppNeeds
+                      );
+                      dispatchGlobalEventExceptSelf(
+                        "keplr_enabled_chain_changed",
+                        keyInfo.id
                       );
                       replaceToWelcomePage();
                     } else {

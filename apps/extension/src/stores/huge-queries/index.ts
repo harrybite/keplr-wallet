@@ -115,6 +115,7 @@ export class HugeQueriesStore {
 
     for (const chainInfo of this.chainStore.chainInfosInUI) {
       const account = this.accountStore.getAccount(chainInfo.chainId);
+      const mainCurrency = chainInfo.stakeCurrency || chainInfo.currencies[0];
 
       if (account.bech32Address === "") {
         continue;
@@ -127,9 +128,12 @@ export class HugeQueriesStore {
       }
       for (const currency of currencies) {
         const denomHelper = new DenomHelper(currency.coinMinimalDenom);
+        const isERC20 = denomHelper.type === "erc20";
+        const isMainCurrency =
+          mainCurrency.coinMinimalDenom === currency.coinMinimalDenom;
         const queryBalance =
           this.chainStore.isEvmChain(chainInfo.chainId) &&
-          denomHelper.type === "erc20"
+          (isMainCurrency || isERC20)
             ? queries.queryBalances.getQueryEthereumHexAddress(
                 account.ethereumHexAddress
               )
@@ -167,12 +171,26 @@ export class HugeQueriesStore {
           } else {
             const balance = queryBalance.getBalance(currency);
             if (balance) {
-              // If the balance is zero and currency is "native", don't show it.
-              if (
-                balance.balance.toDec().equals(HugeQueriesStore.zeroDec) &&
-                new DenomHelper(currency.coinMinimalDenom).type === "native"
-              ) {
-                continue;
+              if (balance.balance.toDec().equals(HugeQueriesStore.zeroDec)) {
+                const denomHelper = new DenomHelper(currency.coinMinimalDenom);
+                // If the balance is zero and currency is "native" or "erc20", don't show it.
+                if (
+                  denomHelper.type === "native" ||
+                  denomHelper.type === "erc20"
+                ) {
+                  // However, if currency is native currency and not ibc, and same with currencies[0],
+                  // just show it as 0 balance.
+                  if (
+                    chainInfo.currencies.length > 0 &&
+                    chainInfo.currencies[0].coinMinimalDenom ===
+                      currency.coinMinimalDenom &&
+                    !currency.coinMinimalDenom.startsWith("ibc/")
+                  ) {
+                    // 위의 if 문을 뒤집기(?) 귀찮아서 그냥 빈 if-else로 처리한다...
+                  } else {
+                    continue;
+                  }
+                }
               }
 
               keysUsed.set(key, true);
@@ -462,6 +480,18 @@ export class HugeQueriesStore {
     const bPrice = b.price?.toDec() ?? HugeQueriesStore.zeroDec;
 
     if (aPrice.equals(bPrice)) {
+      if (aPrice.equals(HugeQueriesStore.zeroDec)) {
+        const aHasBalance = a.token.toDec().gt(HugeQueriesStore.zeroDec);
+        const bHasBalance = b.token.toDec().gt(HugeQueriesStore.zeroDec);
+
+        if (aHasBalance && !bHasBalance) {
+          return -1;
+        } else if (!aHasBalance && bHasBalance) {
+          return 1;
+        } else {
+          return 0;
+        }
+      }
       return 0;
     } else if (aPrice.gt(bPrice)) {
       return -1;

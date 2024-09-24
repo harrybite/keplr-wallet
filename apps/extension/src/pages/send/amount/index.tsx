@@ -31,8 +31,8 @@ import { Gutter } from "../../../components/gutter";
 import { FeeControl } from "../../../components/input/fee-control";
 import { useNotification } from "../../../hooks/notification";
 import { DenomHelper, ExtensionKVStore } from "@keplr-wallet/common";
-import { ICNSInfo } from "../../../config.ui";
-import { CoinPretty, DecUtils } from "@keplr-wallet/unit";
+import { ENSInfo, ICNSInfo } from "../../../config.ui";
+import { CoinPretty, Dec, DecUtils } from "@keplr-wallet/unit";
 import { ColorPalette } from "../../../styles";
 import { openPopupWindow } from "@keplr-wallet/popup";
 import { InExtensionMessageRequester } from "@keplr-wallet/router-extension";
@@ -53,7 +53,7 @@ import { useIBCChannelConfigQueryString } from "../../../hooks/use-ibc-channel-c
 import { VerticalCollapseTransition } from "../../../components/transition/vertical-collapse";
 import { GuideBox } from "../../../components/guide-box";
 import { ChainIdHelper } from "@keplr-wallet/cosmos";
-import { amountToAmbiguousAverage } from "../../../utils";
+import { amountToAmbiguousAverage, isRunningInSidePanel } from "../../../utils";
 import { EthTxStatus } from "@keplr-wallet/types";
 
 const Styles = {
@@ -85,6 +85,8 @@ export const SendAmountPage: FunctionComponent = observer(() => {
   const chainId = initialChainId || chainStore.chainInfosInUI[0].chainId;
   const chainInfo = chainStore.getChain(chainId);
   const isEvmChain = chainStore.isEvmChain(chainId);
+  const isEVMOnlyChain = chainStore.isEvmOnlyChain(chainId);
+
   const coinMinimalDenom =
     initialCoinMinimalDenom ||
     chainStore.getChain(chainId).currencies[0].coinMinimalDenom;
@@ -113,7 +115,7 @@ export const SendAmountPage: FunctionComponent = observer(() => {
     }
   }, [navigate, initialChainId, initialCoinMinimalDenom]);
 
-  const [isEvmTx, setIsEvmTx] = useState(isErc20);
+  const [isEvmTx, setIsEvmTx] = useState(isErc20 || isEVMOnlyChain);
 
   const account = accountStore.getAccount(chainId);
   const ethereumAccount = ethereumAccountStore.getAccount(chainId);
@@ -130,14 +132,16 @@ export const SendAmountPage: FunctionComponent = observer(() => {
     chainId,
     sender,
     // TODO: 이 값을 config 밑으로 빼자
-    300000,
+    isEvmTx ? 21000 : 300000,
     isIBCTransfer,
     {
       allowHexAddressToBech32Address:
         !isEvmChain &&
+        !isEvmTx &&
         !chainStore.getChain(chainId).chainId.startsWith("injective"),
       allowHexAddressOnly: isEvmTx,
       icns: ICNSInfo,
+      ens: ENSInfo,
       computeTerraClassicTax: true,
     }
   );
@@ -152,7 +156,15 @@ export const SendAmountPage: FunctionComponent = observer(() => {
       );
 
       if (denomHelper.type !== "native") {
-        if (denomHelper.type === "cw20" || denomHelper.type === "erc20") {
+        if (denomHelper.type === "erc20") {
+          // XXX: This logic causes gas simulation to run even if `gasSimulatorKey` is the same, it needs to be figured out why.
+          const amountHexDigits = BigInt(
+            sendConfigs.amountConfig.amount[0].toCoin().amount
+          ).toString(16).length;
+          return `${txType}/${denomHelper.type}/${denomHelper.contractAddress}/${amountHexDigits}`;
+        }
+
+        if (denomHelper.type === "cw20") {
           // Probably, the gas can be different per cw20 according to how the contract implemented.
           return `${txType}/${denomHelper.type}/${denomHelper.contractAddress}`;
         }
@@ -162,7 +174,11 @@ export const SendAmountPage: FunctionComponent = observer(() => {
     }
 
     return `${txType}/native`;
-  }, [isEvmTx, sendConfigs.amountConfig.currency]);
+  }, [
+    isEvmTx,
+    sendConfigs.amountConfig.amount,
+    sendConfigs.amountConfig.currency,
+  ]);
 
   const gasSimulator = useGasSimulator(
     new ExtensionKVStore("gas-simulator.main.send"),
@@ -218,12 +234,10 @@ export const SendAmountPage: FunctionComponent = observer(() => {
         );
       }
 
-      const isEvmTx =
-        isEvmChain && sendConfigs.recipientConfig.isRecipientEthereumHexAddress;
       if (isEvmTx) {
         return {
           simulate: () =>
-            ethereumAccount.simulateGas({
+            ethereumAccount.simulateGasForSendTokenTx({
               currency: sendConfigs.amountConfig.amount[0].currency,
               amount: sendConfigs.amountConfig.amount[0].toDec().toString(),
               sender: sendConfigs.senderConfig.sender,
@@ -241,26 +255,94 @@ export const SendAmountPage: FunctionComponent = observer(() => {
   );
 
   useEffect(() => {
-    const newIsEvmTx =
-      new DenomHelper(sendConfigs.amountConfig.currency.coinMinimalDenom)
-        .type === "erc20" ||
-      (isEvmChain && sendConfigs.recipientConfig.isRecipientEthereumHexAddress);
+    if (chainStore.getChain(chainId).hasFeature("feemarket")) {
+      // feemarket 이상하게 만들어서 simulate하면 더 적은 gas가 나온다 귀찮아서 대충 처리.
+      gasSimulator.setGasAdjustmentValue("1.6");
+    }
+  }, [chainId, chainStore, gasSimulator]);
 
-    const newSenderAddress = newIsEvmTx
-      ? account.ethereumHexAddress
-      : account.bech32Address;
+  useEffect(() => {
+    if (isEvmChain) {
+      const sendingDenomHelper = new DenomHelper(
+        sendConfigs.amountConfig.currency.coinMinimalDenom
+      );
+      const isERC20 = sendingDenomHelper.type === "erc20";
+      const isSendingNativeToken =
+        sendingDenomHelper.type === "native" &&
+        (chainInfo.stakeCurrency?.coinMinimalDenom ??
+          chainInfo.currencies[0].coinMinimalDenom) ===
+          sendingDenomHelper.denom;
+      const newIsEvmTx =
+        isEVMOnlyChain ||
+        (sendConfigs.recipientConfig.isRecipientEthereumHexAddress &&
+          (isERC20 || isSendingNativeToken));
 
-    sendConfigs.senderConfig.setValue(newSenderAddress);
-    setIsEvmTx(newIsEvmTx);
-    ethereumAccount.setIsSendingTx(false);
+      const newSenderAddress = newIsEvmTx
+        ? account.ethereumHexAddress
+        : account.bech32Address;
+
+      sendConfigs.senderConfig.setValue(newSenderAddress);
+      setIsEvmTx(newIsEvmTx);
+      ethereumAccount.setIsSendingTx(false);
+    }
   }, [
     account,
     ethereumAccount,
     isEvmChain,
+    isEVMOnlyChain,
     sendConfigs.amountConfig.currency.coinMinimalDenom,
     sendConfigs.recipientConfig.isRecipientEthereumHexAddress,
     sendConfigs.senderConfig,
+    chainInfo.stakeCurrency?.coinMinimalDenom,
+    chainInfo.currencies,
   ]);
+
+  useEffect(() => {
+    (async () => {
+      if (chainInfo.features.includes("op-stack-l1-data-fee")) {
+        const { maxFeePerGas, maxPriorityFeePerGas, gasPrice } =
+          sendConfigs.feeConfig.getEIP1559TxFees(sendConfigs.feeConfig.type);
+
+        const { to, gasLimit, value, data, chainId } =
+          ethereumAccount.makeSendTokenTx({
+            currency: sendConfigs.amountConfig.amount[0].currency,
+            amount: sendConfigs.amountConfig.amount[0].toDec().toString(),
+            to: sendConfigs.recipientConfig.recipient,
+            gasLimit: sendConfigs.gasConfig.gas,
+            maxFeePerGas: maxFeePerGas?.toString(),
+            maxPriorityFeePerGas: maxPriorityFeePerGas?.toString(),
+            gasPrice: gasPrice?.toString(),
+          });
+
+        const l1DataFee = await ethereumAccount.simulateOpStackL1Fee({
+          to,
+          gasLimit,
+          value,
+          data,
+          chainId,
+        });
+        sendConfigs.feeConfig.setL1DataFee(new Dec(BigInt(l1DataFee)));
+      }
+    })();
+  }, [
+    chainInfo.features,
+    ethereumAccount,
+    sendConfigs.amountConfig.amount,
+    sendConfigs.feeConfig,
+    sendConfigs.gasConfig.gas,
+    sendConfigs.recipientConfig.recipient,
+  ]);
+
+  useEffect(() => {
+    if (isEvmTx) {
+      // Refresh EIP-1559 fee every 12 seconds.
+      const intervalId = setInterval(() => {
+        sendConfigs.feeConfig.refreshEIP1559TxFees();
+      }, 12000);
+
+      return () => clearInterval(intervalId);
+    }
+  }, [isEvmTx, sendConfigs.feeConfig]);
 
   useEffect(() => {
     // To simulate secretwasm, we need to include the signature in the tx.
@@ -374,7 +456,8 @@ export const SendAmountPage: FunctionComponent = observer(() => {
       fixedMinHeight={true}
       left={<BackButton />}
       right={
-        !isDetachedMode ? (
+        // side panel 모드에서는 detach 모드가 필요가 없다...
+        isDetachedMode || isRunningInSidePanel() ? null : (
           <Box
             paddingRight="1rem"
             cursor="pointer"
@@ -390,7 +473,7 @@ export const SendAmountPage: FunctionComponent = observer(() => {
           >
             <DetachIcon size="1.5rem" color={ColorPalette["gray-300"]} />
           </Box>
-        ) : null
+        )
       }
       bottomButton={{
         disabled: txConfigsValidate.interactionBlocked,
@@ -407,21 +490,21 @@ export const SendAmountPage: FunctionComponent = observer(() => {
 
         if (!txConfigsValidate.interactionBlocked) {
           try {
-            if (isEvmTx && sendConfigs.feeConfig.type !== "manual") {
+            if (isEvmTx) {
               ethereumAccount.setIsSendingTx(true);
-              const { maxFeePerGas, maxPriorityFeePerGas } =
+              const { maxFeePerGas, maxPriorityFeePerGas, gasPrice } =
                 sendConfigs.feeConfig.getEIP1559TxFees(
                   sendConfigs.feeConfig.type
                 );
 
-              const unsignedTx = await ethereumAccount.makeSendTokenTx({
+              const unsignedTx = ethereumAccount.makeSendTokenTx({
                 currency: sendConfigs.amountConfig.amount[0].currency,
                 amount: sendConfigs.amountConfig.amount[0].toDec().toString(),
-                from: sender,
                 to: sendConfigs.recipientConfig.recipient,
                 gasLimit: sendConfigs.gasConfig.gas,
-                maxFeePerGas: maxFeePerGas.toString(),
-                maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+                maxFeePerGas: maxFeePerGas?.toString(),
+                maxPriorityFeePerGas: maxPriorityFeePerGas?.toString(),
+                gasPrice: gasPrice?.toString(),
               });
               await ethereumAccount.sendEthereumTx(sender, unsignedTx, {
                 onFulfill: (txReceipt) => {
@@ -747,7 +830,7 @@ export const SendAmountPage: FunctionComponent = observer(() => {
             />
           </YAxis>
 
-          {!isErc20 && (
+          {!isErc20 && !isEVMOnlyChain && (
             <LayeredHorizontalRadioGroup
               size="large"
               selectedKey={isIBCTransfer ? "ibc-transfer" : "send"}
@@ -859,6 +942,7 @@ export const SendAmountPage: FunctionComponent = observer(() => {
             feeConfig={sendConfigs.feeConfig}
             gasConfig={sendConfigs.gasConfig}
             gasSimulator={gasSimulator}
+            isForEVMTx={isEvmTx}
           />
         </Stack>
       </Box>

@@ -7,13 +7,13 @@ import {
   runInAction,
 } from "mobx";
 
+import { ChainInfo } from "@keplr-wallet/types";
 import {
   ChainStore as BaseChainStore,
   IChainInfoImpl,
 } from "@keplr-wallet/stores";
 import { KeyRingStore } from "@keplr-wallet/stores-core";
 
-import { ChainInfo } from "@keplr-wallet/types";
 import {
   ChainInfoWithCoreTypes,
   ClearAllChainEndpointsMsg,
@@ -231,9 +231,12 @@ export class ChainStore extends BaseChainStore<ChainInfoWithCoreTypes> {
   @flow
   *enableChainInfoInUIWithVaultId(vaultId: string, ...chainIds: string[]) {
     const msg = new EnableChainsMsg(vaultId, chainIds);
-    this._enabledChainIdentifiers = yield* toGenerator(
+    const enabledChainIdentifiers = yield* toGenerator(
       this.requester.sendMessage(BACKGROUND_PORT, msg)
     );
+    if (this.keyRingStore.selectedKeyInfo?.id === vaultId) {
+      this._enabledChainIdentifiers = enabledChainIdentifiers;
+    }
   }
 
   @flow
@@ -254,9 +257,12 @@ export class ChainStore extends BaseChainStore<ChainInfoWithCoreTypes> {
   @flow
   *disableChainInfoInUIWithVaultId(vaultId: string, ...chainIds: string[]) {
     const msg = new DisableChainsMsg(vaultId, chainIds);
-    this._enabledChainIdentifiers = yield* toGenerator(
+    const enabledChainIdentifiers = yield* toGenerator(
       this.requester.sendMessage(BACKGROUND_PORT, msg)
     );
+    if (this.keyRingStore.selectedKeyInfo?.id === vaultId) {
+      this._enabledChainIdentifiers = enabledChainIdentifiers;
+    }
   }
 
   @flow
@@ -273,6 +279,12 @@ export class ChainStore extends BaseChainStore<ChainInfoWithCoreTypes> {
     autorun(() => {
       // Change the enabled chain identifiers when the selected key info is changed.
       if (this.keyRingStore.selectedKeyInfo) {
+        if (
+          this._lastSyncedEnabledChainsVaultId ===
+          this.keyRingStore.selectedKeyInfo.id
+        ) {
+          return;
+        }
         this.updateEnabledChainIdentifiersFromBackground();
       }
     });
@@ -316,16 +328,9 @@ export class ChainStore extends BaseChainStore<ChainInfoWithCoreTypes> {
   }
 
   @flow
-  protected *updateEnabledChainIdentifiersFromBackground() {
+  *updateEnabledChainIdentifiersFromBackground() {
     if (!this.keyRingStore.selectedKeyInfo) {
       this._lastSyncedEnabledChainsVaultId = "";
-      return;
-    }
-
-    if (
-      this._lastSyncedEnabledChainsVaultId ===
-      this.keyRingStore.selectedKeyInfo.id
-    ) {
       return;
     }
 

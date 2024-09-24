@@ -1,7 +1,29 @@
 import { KeplrError, Message } from "@keplr-wallet/router";
-import { ChainInfoWithCoreTypes } from "./types";
 import { ChainInfo, ChainInfoWithoutEndpoints } from "@keplr-wallet/types";
 import { ROUTE } from "./constants";
+import { ChainInfoWithCoreTypes } from "./types";
+
+export class PingMsg extends Message<void> {
+  public static type() {
+    return "keplr-ping";
+  }
+
+  validateBasic(): void {
+    // noop
+  }
+
+  route(): string {
+    return ROUTE;
+  }
+
+  override approveExternal(): boolean {
+    return true;
+  }
+
+  type(): string {
+    return PingMsg.type();
+  }
+}
 
 export class GetChainInfosWithCoreTypesMsg extends Message<{
   chainInfos: ChainInfoWithCoreTypes[];
@@ -47,6 +69,36 @@ export class GetChainInfosWithoutEndpointsMsg extends Message<{
   }
 }
 
+export class GetChainInfoWithoutEndpointsMsg extends Message<{
+  chainInfo: ChainInfoWithoutEndpoints | undefined;
+}> {
+  public static type() {
+    return "get-chain-info-without-endpoints";
+  }
+
+  constructor(public readonly chainId: string) {
+    super();
+  }
+
+  validateBasic(): void {
+    if (!this.chainId) {
+      throw new KeplrError("chains", 101, "Chain id not set");
+    }
+  }
+
+  override approveExternal(): boolean {
+    return true;
+  }
+
+  route(): string {
+    return ROUTE;
+  }
+
+  type(): string {
+    return GetChainInfoWithoutEndpointsMsg.type();
+  }
+}
+
 export class SuggestChainInfoMsg extends Message<void> {
   public static type() {
     return "suggest-chain-info";
@@ -72,6 +124,34 @@ export class SuggestChainInfoMsg extends Message<void> {
 
   type(): string {
     return SuggestChainInfoMsg.type();
+  }
+}
+
+export class NeedSuggestChainInfoInteractionMsg extends Message<boolean> {
+  public static type() {
+    return "need-suggest-chain-info-interaction";
+  }
+
+  constructor(public readonly chainInfo: ChainInfo) {
+    super();
+  }
+
+  validateBasic(): void {
+    if (!this.chainInfo) {
+      throw new KeplrError("chains", 100, "Chain info not set");
+    }
+  }
+
+  override approveExternal(): boolean {
+    return true;
+  }
+
+  route(): string {
+    return ROUTE;
+  }
+
+  type(): string {
+    return NeedSuggestChainInfoInteractionMsg.type();
   }
 }
 

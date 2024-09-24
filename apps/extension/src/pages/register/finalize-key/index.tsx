@@ -20,6 +20,7 @@ import lottie from "lottie-web";
 import { PlainObject } from "@keplr-wallet/background";
 import { MultiAccounts } from "@keystonehq/keystone-sdk";
 import { useTheme } from "styled-components";
+import { dispatchGlobalEventExceptSelf } from "../../../utils/global-events";
 
 /**
  * FinalizeKeyScene is used to create the key (account).
@@ -191,6 +192,8 @@ export const FinalizeKeyScene: FunctionComponent<{
           }
         }
 
+        dispatchGlobalEventExceptSelf("keplr_new_key_created", vaultId);
+
         await Promise.allSettled(promises);
 
         const candidateAddresses: {
@@ -260,35 +263,49 @@ export const FinalizeKeyScene: FunctionComponent<{
           const promises: Promise<unknown>[] = [];
 
           for (const candidateAddress of candidateAddresses) {
+            const account = accountStore.getAccount(candidateAddress.chainId);
             const queries = queriesStore.get(candidateAddress.chainId);
+            const isEVMOnlyChain = chainStore.isEvmOnlyChain(
+              candidateAddress.chainId
+            );
             for (const bech32Address of candidateAddress.bech32Addresses) {
               // Prepare queries state to avoid UI flicker on next scene.
-              promises.push(
-                queries.cosmos.queryAccount
-                  .getQueryBech32Address(bech32Address.address)
-                  .waitFreshResponse()
-              );
+              if (!isEVMOnlyChain) {
+                promises.push(
+                  queries.cosmos.queryAccount
+                    .getQueryBech32Address(bech32Address.address)
+                    .waitFreshResponse()
+                );
+              }
               promises.push(
                 (async () => {
                   const chainInfo = chainStore.getChain(
                     candidateAddress.chainId
                   );
-                  const bal = queries.queryBalances
-                    .getQueryBech32Address(bech32Address.address)
-                    .getBalance(
-                      chainInfo.stakeCurrency || chainInfo.currencies[0]
-                    );
+                  const bal = isEVMOnlyChain
+                    ? queries.queryBalances
+                        .getQueryEthereumHexAddress(account.ethereumHexAddress)
+                        .getBalance(
+                          chainInfo.stakeCurrency || chainInfo.currencies[0]
+                        )
+                    : queries.queryBalances
+                        .getQueryBech32Address(bech32Address.address)
+                        .getBalance(
+                          chainInfo.stakeCurrency || chainInfo.currencies[0]
+                        );
 
                   if (bal) {
                     await bal.waitFreshResponse();
                   }
                 })()
               );
-              promises.push(
-                queries.cosmos.queryDelegations
-                  .getQueryBech32Address(bech32Address.address)
-                  .waitFreshResponse()
-              );
+              if (!isEVMOnlyChain) {
+                promises.push(
+                  queries.cosmos.queryDelegations
+                    .getQueryBech32Address(bech32Address.address)
+                    .waitFreshResponse()
+                );
+              }
             }
 
             const chainInfo = chainStore.getChain(candidateAddress.chainId);

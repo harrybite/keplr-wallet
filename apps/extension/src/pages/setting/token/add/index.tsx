@@ -31,6 +31,7 @@ import { Bech32Address } from "@keplr-wallet/cosmos";
 import { ContractAddressBookModal } from "../../../../components/contract-address-book-modal";
 import { IconButton } from "../../../../components/icon-button";
 import { MenuIcon } from "../../../../components/icon";
+import { handleExternalInteractionWithNoProceedNext } from "../../../../utils";
 
 const Styles = {
   Container: styled(Stack)`
@@ -69,7 +70,7 @@ export const SettingTokenAddPage: FunctionComponent = observer(() => {
       return (
         chainInfo.features?.includes("cosmwasm") ||
         chainInfo.features?.includes("secretwasm") ||
-        chainInfo.evm !== undefined
+        chainInfo.evm != null
       );
     });
   }, [chainStore.chainInfosInListUI]);
@@ -125,7 +126,7 @@ export const SettingTokenAddPage: FunctionComponent = observer(() => {
 
   const chainInfo = chainStore.getChain(chainId);
   const isSecretWasm = chainInfo.hasFeature("secretwasm");
-  const isEvmChain = chainInfo.evm !== undefined;
+  const isEvmChain = chainStore.isEvmChain(chainId);
   const [isOpenSecret20ViewingKey, setIsOpenSecret20ViewingKey] =
     useState(false);
 
@@ -270,7 +271,7 @@ export const SettingTokenAddPage: FunctionComponent = observer(() => {
                     interactionInfo.interaction &&
                     !interactionInfo.interactionInternal
                   ) {
-                    window.close();
+                    handleExternalInteractionWithNoProceedNext();
                   }
                 }
 
@@ -345,7 +346,7 @@ export const SettingTokenAddPage: FunctionComponent = observer(() => {
                 if (!isEvmChain) {
                   Bech32Address.validate(
                     value,
-                    chainInfo.bech32Config.bech32PrefixAccAddr
+                    chainInfo.bech32Config?.bech32PrefixAccAddr
                   );
                 }
               } catch (e) {

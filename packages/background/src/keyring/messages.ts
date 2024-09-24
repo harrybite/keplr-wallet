@@ -12,6 +12,32 @@ import { PlainObject } from "../vault";
 import * as Legacy from "./legacy";
 import { MultiAccounts } from "../keyring-keystone";
 
+export class GetIsLockedMsg extends Message<boolean> {
+  public static type() {
+    return "GetIsLockedMsg";
+  }
+
+  constructor() {
+    super();
+  }
+
+  validateBasic(): void {
+    // noop
+  }
+
+  override approveExternal(): boolean {
+    return true;
+  }
+
+  route(): string {
+    return ROUTE;
+  }
+
+  type(): string {
+    return GetIsLockedMsg.type();
+  }
+}
+
 export class GetKeyRingStatusMsg extends Message<{
   status: KeyRingStatus;
   keyInfos: KeyInfo[];
@@ -689,5 +715,29 @@ export class CheckPasswordMsg extends Message<boolean> {
 
   type(): string {
     return CheckPasswordMsg.type();
+  }
+}
+
+export class SearchKeyRingsMsg extends Message<KeyInfo[]> {
+  public static type() {
+    return "search-keyrings";
+  }
+
+  constructor(public readonly searchText: string) {
+    super();
+  }
+
+  validateBasic(): void {
+    if (this.searchText == null) {
+      throw new Error("searchText not set");
+    }
+  }
+
+  route(): string {
+    return ROUTE;
+  }
+
+  type(): string {
+    return SearchKeyRingsMsg.type();
   }
 }

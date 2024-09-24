@@ -7,6 +7,7 @@ import {
   DirectSignResponse,
   EthSignType,
   ICNSAdr36Signatures,
+  IEthereumProvider,
   Keplr,
   KeplrIntereactionOptions,
   KeplrMode,
@@ -27,6 +28,7 @@ import {
 import { Buffer } from "buffer/";
 import { ProposalTypes, SessionTypes } from "@walletconnect/types";
 import Long from "long";
+import EventEmitter from "events";
 
 interface RequestParams {
   topic: string;
@@ -45,6 +47,7 @@ interface KeplrGetKeyWalletConnectV2Response {
   readonly pubKey: string;
   readonly address: string;
   readonly bech32Address: string;
+  readonly ethereumHexAddress: string;
   readonly isNanoLedger: boolean;
 }
 
@@ -54,6 +57,10 @@ export class KeplrWalletConnectV2 implements Keplr {
   readonly version: string = "0.12.20";
   readonly mode: KeplrMode = "walletconnect";
   protected readonly storeKey = "keplr_wallet_connect_v2_key";
+  protected readonly storeSuggestChainKey =
+    "keplr_wallet_connect_v2_suggest_chain_key";
+  protected readonly storeSuggestTokenKey =
+    "keplr_wallet_connect_v2_suggest_token_key";
 
   constructor(
     public readonly signClient: SignClient,
@@ -76,6 +83,8 @@ export class KeplrWalletConnectV2 implements Keplr {
 
     signClient.on("session_delete", async () => {
       localStorage.removeItem(this.getKeyLastSeenKey());
+      localStorage.removeItem(this.getSuggestChainKey());
+      localStorage.removeItem(this.getSuggestTokenKey());
     });
   }
 
@@ -105,6 +114,7 @@ export class KeplrWalletConnectV2 implements Keplr {
       !data.hasOwnProperty("pubKey") ||
       !data.hasOwnProperty("address") ||
       !data.hasOwnProperty("bech32Address") ||
+      !data.hasOwnProperty("ethereumHexAddress") ||
       !data.hasOwnProperty("isNanoLedger")
     ) {
       throw new Error("Invalid data");
@@ -116,6 +126,7 @@ export class KeplrWalletConnectV2 implements Keplr {
       pubKey: data.pubKey as string,
       address: data.address as string,
       bech32Address: data.bech32Address as string,
+      ethereumHexAddress: data.ethereumHexAddress as string,
       isNanoLedger: data.isNanoLedger === "true",
     };
   }
@@ -182,6 +193,106 @@ export class KeplrWalletConnectV2 implements Keplr {
     localStorage.setItem(this.getKeyLastSeenKey(), JSON.stringify(data));
   }
 
+  protected getSuggestChainKey() {
+    const topic = this.getCurrentTopic();
+    return `${this.storeSuggestChainKey}/${topic}-key`;
+  }
+
+  protected getRegisteredSuggestChain(chainId: string): ChainInfo | undefined {
+    const saved = this.getAllRegisteredSuggestChain();
+
+    if (!saved) {
+      return undefined;
+    }
+
+    return saved[chainId];
+  }
+
+  protected getAllRegisteredSuggestChain() {
+    const data = localStorage.getItem(this.getSuggestChainKey());
+    if (!data) {
+      return undefined;
+    }
+
+    return JSON.parse(data);
+  }
+
+  protected saveRegisteredSuggestChain(chainInfo: ChainInfo) {
+    let saved = this.getAllRegisteredSuggestChain();
+
+    if (!saved) {
+      saved = {};
+    }
+
+    saved[chainInfo.chainId] = chainInfo;
+
+    this.saveAllRegisteredSuggestChain(saved);
+  }
+
+  protected saveAllRegisteredSuggestChain(data: {
+    [chainId: string]: ChainInfo | undefined;
+  }) {
+    localStorage.setItem(this.getSuggestChainKey(), JSON.stringify(data));
+  }
+
+  protected getSuggestTokenKey() {
+    const topic = this.getCurrentTopic();
+    return `${this.storeSuggestTokenKey}/${topic}-key`;
+  }
+
+  protected getRegisteredSuggestToken(
+    contractAddress: string
+  ): ChainInfo | undefined {
+    const saved = this.getAllRegisteredSuggestToken();
+
+    if (!saved) {
+      return undefined;
+    }
+
+    return saved[contractAddress];
+  }
+
+  protected getAllRegisteredSuggestToken() {
+    const data = localStorage.getItem(this.getSuggestTokenKey());
+    if (!data) {
+      return undefined;
+    }
+
+    return JSON.parse(data);
+  }
+
+  protected saveRegisteredSuggestToken(
+    chainId: string,
+    contractAddress: string,
+    viewingKey?: string
+  ) {
+    let saved = this.getAllRegisteredSuggestToken();
+
+    if (!saved) {
+      saved = {};
+    }
+
+    saved[contractAddress] = {
+      chainId,
+      contractAddress,
+      viewingKey,
+    };
+
+    this.saveAllRegisteredSuggestToken(saved);
+  }
+
+  protected saveAllRegisteredSuggestToken(data: {
+    [contractAddress: string]:
+      | {
+          chainId: string;
+          contractAddress: string;
+          viewingKey?: string;
+        }
+      | undefined;
+  }) {
+    localStorage.setItem(this.getSuggestTokenKey(), JSON.stringify(data));
+  }
+
   protected async sendCustomRequest<T>(
     requestParams: RequestParams
   ): Promise<T> {
@@ -214,6 +325,10 @@ export class KeplrWalletConnectV2 implements Keplr {
     if (mobileLinkInfo) {
       window.location.href = JSON.parse(mobileLinkInfo).href;
     }
+  }
+
+  ping(): Promise<void> {
+    return Promise.resolve();
   }
 
   changeKeyRingName(_opts: {
@@ -324,11 +439,49 @@ export class KeplrWalletConnectV2 implements Keplr {
     throw new Error("Not yet implemented");
   }
 
-  experimentalSuggestChain(_chainInfo: ChainInfo): Promise<void> {
-    throw new Error("Not yet implemented");
+  async experimentalSuggestChain(_chainInfo: ChainInfo): Promise<void> {
+    if (
+      _chainInfo.features?.includes("stargate") ||
+      _chainInfo.features?.includes("no-legacy-stdTx")
+    ) {
+      console.warn(
+        "“stargate”, “no-legacy-stdTx” feature has been deprecated. The launchpad is no longer supported, thus works without the two features. We would keep the aforementioned two feature for a while, but the upcoming update would potentially cause errors. Remove the two feature."
+      );
+    }
+
+    const registeredChainInfo = this.getRegisteredSuggestChain(
+      _chainInfo.chainId
+    );
+    if (registeredChainInfo) {
+      return;
+    }
+
+    this.checkDeepLink();
+
+    const topic = this.getCurrentTopic();
+    const param = {
+      topic,
+      chainId: this.getNamespaceChainId(),
+      request: {
+        method: "keplr_experimentalSuggestChain",
+        params: {
+          chainInfo: _chainInfo,
+        },
+      },
+    };
+
+    await this.sendCustomRequest(param);
+
+    this.saveRegisteredSuggestChain(_chainInfo);
   }
 
   getChainInfosWithoutEndpoints(): Promise<ChainInfoWithoutEndpoints[]> {
+    throw new Error("Not yet implemented");
+  }
+
+  getChainInfoWithoutEndpoints(
+    _chainId: string
+  ): Promise<ChainInfoWithoutEndpoints> {
     throw new Error("Not yet implemented");
   }
 
@@ -354,6 +507,7 @@ export class KeplrWalletConnectV2 implements Keplr {
       return {
         algo: lastSeenKey.algo,
         bech32Address: lastSeenKey.bech32Address,
+        ethereumHexAddress: lastSeenKey.ethereumHexAddress,
         address: Buffer.from(lastSeenKey.address, "base64"),
         name: lastSeenKey.name,
         pubKey: Buffer.from(lastSeenKey.pubKey, "base64"),
@@ -371,6 +525,8 @@ export class KeplrWalletConnectV2 implements Keplr {
         return {
           algo: lastSession.sessionProperties["algo"],
           bech32Address: lastSession.sessionProperties["bech32Address"],
+          ethereumHexAddress:
+            lastSession.sessionProperties["ethereumHexAddress"],
           address: Buffer.from(
             lastSession.sessionProperties["address"],
             "base64"
@@ -406,6 +562,7 @@ export class KeplrWalletConnectV2 implements Keplr {
       pubKey: string;
       address: string;
       bech32Address: string;
+      ethereumHexAddress: string;
       isNanoLedger: boolean;
     }>(param);
 
@@ -654,12 +811,35 @@ export class KeplrWalletConnectV2 implements Keplr {
     throw new Error("Not yet implemented");
   }
 
-  suggestToken(
+  async suggestToken(
     _chainId: string,
     _contractAddress: string,
     _viewingKey?: string
   ): Promise<void> {
-    throw new Error("Not yet implemented");
+    const registeredToken = this.getRegisteredSuggestToken(_contractAddress);
+    if (registeredToken) {
+      return;
+    }
+
+    this.checkDeepLink();
+
+    const topic = this.getCurrentTopic();
+    const param = {
+      topic,
+      chainId: this.getNamespaceChainId(),
+      request: {
+        method: "keplr_suggestToken",
+        params: {
+          chainId: _chainId,
+          contractAddress: _contractAddress,
+          viewingKey: _viewingKey,
+        },
+      },
+    };
+
+    await this.sendCustomRequest(param);
+
+    this.saveRegisteredSuggestToken(_chainId, _contractAddress, _viewingKey);
   }
 
   verifyArbitrary(
@@ -677,5 +857,40 @@ export class KeplrWalletConnectV2 implements Keplr {
 
   suggestERC20(_chainId: string, _contractAddress: string): Promise<void> {
     throw new Error("Not yet implemented");
+  }
+
+  public readonly ethereum = new MockEthereumProvider();
+}
+
+class MockEthereumProvider extends EventEmitter implements IEthereumProvider {
+  readonly chainId: string | null = null;
+  readonly selectedAddress: string | null = null;
+
+  readonly networkVersion: string | null = null;
+
+  readonly isKeplr: boolean = true;
+  readonly isMetaMask: boolean = true;
+
+  constructor() {
+    super();
+  }
+
+  isConnected(): boolean {
+    throw new Error("Method not implemented.");
+  }
+
+  request<T>({}: {
+    method: string;
+    params?: unknown[] | Record<string, unknown>;
+  }): Promise<T> {
+    throw new Error("Not yet implemented");
+  }
+
+  enable(): Promise<string[]> {
+    throw new Error("Method not implemented.");
+  }
+
+  net_version(): Promise<string> {
+    throw new Error("Method not implemented.");
   }
 }

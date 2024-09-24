@@ -11,11 +11,14 @@ import {
   GetChainInfosWithoutEndpointsMsg,
   RemoveSuggestedChainInfoMsg,
   SuggestChainInfoMsg,
+  NeedSuggestChainInfoInteractionMsg,
   SetChainEndpointsMsg,
   ClearChainEndpointsMsg,
   GetChainOriginalEndpointsMsg,
   ClearAllSuggestedChainInfosMsg,
   ClearAllChainEndpointsMsg,
+  GetChainInfoWithoutEndpointsMsg,
+  PingMsg,
 } from "./messages";
 import { ChainInfo } from "@keplr-wallet/types";
 import { getBasicAccessPermissionType, PermissionService } from "../permission";
@@ -34,6 +37,8 @@ export const getHandler: (
 ) => {
   return (env: Env, msg: Message<unknown>) => {
     switch (msg.constructor) {
+      case PingMsg:
+        return {};
       case GetChainInfosWithCoreTypesMsg:
         return handleGetInfosWithCoreTypesMsg(chainsService)(
           env,
@@ -44,10 +49,21 @@ export const getHandler: (
           chainsService,
           permissionInteractiveService
         )(env, msg as GetChainInfosWithoutEndpointsMsg);
+      case GetChainInfoWithoutEndpointsMsg:
+        return handleGetChainInfoWithoutEndpointsMsg(
+          chainsService,
+          permissionInteractiveService
+        )(env, msg as GetChainInfoWithoutEndpointsMsg);
       case SuggestChainInfoMsg:
-        return handleSuggestChainInfoMsg(chainsService, permissionService)(
+        return handleSuggestChainInfoMsg(
+          chainsService,
+          permissionService,
+          permissionInteractiveService
+        )(env, msg as SuggestChainInfoMsg);
+      case NeedSuggestChainInfoInteractionMsg:
+        return handleNeedSuggestChainInfoInteractionMsg(chainsService)(
           env,
-          msg as SuggestChainInfoMsg
+          msg as NeedSuggestChainInfoInteractionMsg
         );
       case RemoveSuggestedChainInfoMsg:
         return handleRemoveSuggestedChainInfoMsg(chainsService)(
@@ -115,18 +131,44 @@ const handleGetChainInfosWithoutEndpointsMsg: (
   };
 };
 
+const handleGetChainInfoWithoutEndpointsMsg: (
+  service: ChainsService,
+  permissionInteractiveService: PermissionInteractiveService
+) => InternalHandler<GetChainInfoWithoutEndpointsMsg> = (
+  service,
+  permissionInteractiveService
+) => {
+  return async (env, msg) => {
+    await permissionInteractiveService.ensureEnabled(
+      env,
+      [msg.chainId],
+      msg.origin
+    );
+
+    const chainInfo = service.getChainInfoWithoutEndpoints(msg.chainId);
+
+    return {
+      chainInfo,
+    };
+  };
+};
+
 const handleSuggestChainInfoMsg: (
   chainsService: ChainsService,
-  permissionService: PermissionService
+  permissionService: PermissionService,
+  permissionInteractiveService: PermissionInteractiveService
 ) => InternalHandler<SuggestChainInfoMsg> = (
   chainsService,
-  permissionService
+  permissionService,
+  permissionInteractiveService
 ) => {
   return async (env, msg) => {
     if (chainsService.getChainInfo(msg.chainInfo.chainId) != null) {
       // If suggested chain info is already registered, just return.
       return;
     }
+
+    await permissionInteractiveService.ensureKeyRingNotEmpty(env);
 
     const chainInfo = msg.chainInfo as Writeable<ChainInfo>;
     chainInfo.beta = true;
@@ -138,6 +180,19 @@ const handleSuggestChainInfoMsg: (
       getBasicAccessPermissionType(),
       [msg.origin]
     );
+  };
+};
+
+const handleNeedSuggestChainInfoInteractionMsg: (
+  chainsService: ChainsService
+) => InternalHandler<NeedSuggestChainInfoInteractionMsg> = (chainsService) => {
+  return async (_env, msg) => {
+    if (chainsService.getChainInfo(msg.chainInfo.chainId) != null) {
+      // If suggested chain info is already registered, just return.
+      return false;
+    }
+
+    return chainsService.needSuggestChainInfoInteraction(msg.origin);
   };
 };
 

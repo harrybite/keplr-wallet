@@ -20,19 +20,29 @@ import {
   SecretUtils,
   SettledResponses,
   DirectAuxSignResponse,
+  IEthereumProvider,
+  EIP6963EventNames,
+  EIP6963ProviderInfo,
+  EIP6963ProviderDetail,
 } from "@keplr-wallet/types";
-import { Result, JSONUint8Array } from "@keplr-wallet/router";
+import {
+  Result,
+  JSONUint8Array,
+  EthereumProviderRpcError,
+} from "@keplr-wallet/router";
 import { KeplrEnigmaUtils } from "./enigma";
 import { CosmJSOfflineSigner, CosmJSOfflineSignerOnlyAmino } from "./cosmjs";
 import deepmerge from "deepmerge";
 import Long from "long";
 import { KeplrCoreTypes } from "./core-types";
+import EventEmitter from "events";
 
 export interface ProxyRequest {
   type: "proxy-request";
   id: string;
   method: keyof (Keplr & KeplrCoreTypes);
   args: any[];
+  ethereumProviderMethod?: keyof IEthereumProvider;
 }
 
 export interface ProxyRequestResponse {
@@ -119,6 +129,10 @@ export class InjectedKeplr implements IKeplr, KeplrCoreTypes {
           throw new Error("Empty id");
         }
 
+        if (message.method.startsWith("protected")) {
+          throw new Error("Rejected");
+        }
+
         if (message.method === "version") {
           throw new Error("Version is not function");
         }
@@ -133,7 +147,8 @@ export class InjectedKeplr implements IKeplr, KeplrCoreTypes {
 
         if (
           !keplr[message.method] ||
-          typeof keplr[message.method] !== "function"
+          (message.method !== "ethereum" &&
+            typeof keplr[message.method] !== "function")
         ) {
           throw new Error(`Invalid method: ${message.method}`);
         }
@@ -236,6 +251,60 @@ export class InjectedKeplr implements IKeplr, KeplrCoreTypes {
             })();
           }
 
+          if (method === "ethereum") {
+            const ethereumProviderMethod = message.ethereumProviderMethod;
+
+            if (ethereumProviderMethod?.startsWith("protected")) {
+              throw new Error("Rejected");
+            }
+
+            if (ethereumProviderMethod === "chainId") {
+              throw new Error("chainId is not function");
+            }
+
+            if (ethereumProviderMethod === "selectedAddress") {
+              throw new Error("selectedAddress is not function");
+            }
+
+            if (ethereumProviderMethod === "networkVersion") {
+              throw new Error("networkVersion is not function");
+            }
+
+            if (ethereumProviderMethod === "isKeplr") {
+              throw new Error("isKeplr is not function");
+            }
+
+            if (ethereumProviderMethod === "isMetaMask") {
+              throw new Error("isMetaMask is not function");
+            }
+
+            if (
+              ethereumProviderMethod === undefined ||
+              typeof keplr.ethereum[ethereumProviderMethod] !== "function"
+            ) {
+              throw new Error(
+                `${message.ethereumProviderMethod} is not function or invalid Ethereum provider method`
+              );
+            }
+
+            const messageArgs = JSONUint8Array.unwrap(message.args);
+            if (ethereumProviderMethod === "request") {
+              return await keplr.ethereum.request(
+                typeof messageArgs === "string"
+                  ? JSON.parse(messageArgs)
+                  : messageArgs
+              );
+            }
+
+            return await keplr.ethereum[ethereumProviderMethod](
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-ignore
+              ...(typeof messageArgs === "string"
+                ? JSON.parse(messageArgs)
+                : messageArgs)
+            );
+          }
+
           return await keplr[method](
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-ignore
@@ -257,7 +326,14 @@ export class InjectedKeplr implements IKeplr, KeplrCoreTypes {
           type: "proxy-request-response",
           id: message.id,
           result: {
-            error: e.message || e.toString(),
+            error:
+              e.code && !e.module
+                ? {
+                    code: e.code,
+                    message: e.message,
+                    data: e.data,
+                  }
+                : e.message || e.toString(),
           },
         };
 
@@ -346,7 +422,8 @@ export class InjectedKeplr implements IKeplr, KeplrCoreTypes {
       postMessage: (message) =>
         window.postMessage(message, window.location.origin),
     },
-    protected readonly parseMessage?: (message: any) => any
+    protected readonly parseMessage?: (message: any) => any,
+    protected readonly eip6963ProviderInfo?: EIP6963ProviderInfo
   ) {
     // Freeze fields/method except for "defaultOptions"
     // Intentionally, "defaultOptions" can be mutated to allow a webpage to change the options with cosmjs usage.
@@ -384,6 +461,10 @@ export class InjectedKeplr implements IKeplr, KeplrCoreTypes {
         });
       }
     }
+  }
+
+  async ping(): Promise<void> {
+    await this.requestMethod("ping", []);
   }
 
   async enable(chainIds: string | string[]): Promise<void> {
@@ -732,6 +813,12 @@ export class InjectedKeplr implements IKeplr, KeplrCoreTypes {
     return await this.requestMethod("getChainInfosWithoutEndpoints", []);
   }
 
+  async getChainInfoWithoutEndpoints(
+    chainId: string
+  ): Promise<ChainInfoWithoutEndpoints> {
+    return await this.requestMethod("getChainInfoWithoutEndpoints", [chainId]);
+  }
+
   __core__getAnalyticsId(): Promise<string> {
     return this.requestMethod("__core__getAnalyticsId", []);
   }
@@ -778,4 +865,283 @@ export class InjectedKeplr implements IKeplr, KeplrCoreTypes {
   async suggestERC20(chainId: string, contractAddress: string): Promise<void> {
     return await this.requestMethod("suggestERC20", [chainId, contractAddress]);
   }
+
+  async __core__webpageClosed(): Promise<void> {
+    return await this.requestMethod("__core__webpageClosed", []);
+  }
+
+  public readonly ethereum = new EthereumProvider(
+    this,
+    this.eventListener,
+    this.parseMessage,
+    this.eip6963ProviderInfo
+  );
+}
+
+class EthereumProvider extends EventEmitter implements IEthereumProvider {
+  // It must be in the hexadecimal format used in EVM-based chains, not the format used in Tendermint nodes.
+  chainId: string | null = null;
+  // It must be in the decimal format of chainId.
+  networkVersion: string | null = null;
+
+  selectedAddress: string | null = null;
+
+  isKeplr = true;
+  isMetaMask = true;
+
+  protected _isConnected = false;
+  protected _currentChainId: string | null = null;
+
+  constructor(
+    protected readonly injectedKeplr: InjectedKeplr,
+    protected readonly eventListener: {
+      addMessageListener: (fn: (e: any) => void) => void;
+      removeMessageListener: (fn: (e: any) => void) => void;
+      postMessage: (message: any) => void;
+    } = {
+      addMessageListener: (fn: (e: any) => void) =>
+        window.addEventListener("message", fn),
+      removeMessageListener: (fn: (e: any) => void) =>
+        window.removeEventListener("message", fn),
+      postMessage: (message) =>
+        window.postMessage(message, window.location.origin),
+    },
+    protected readonly parseMessage?: (message: any) => any,
+    protected readonly eip6963ProviderInfo?: EIP6963ProviderInfo
+  ) {
+    super();
+
+    this._initProviderState();
+
+    window.addEventListener("keplr_keystorechange", async () => {
+      if (this._currentChainId) {
+        const chainInfo = await injectedKeplr.getChainInfoWithoutEndpoints(
+          this._currentChainId
+        );
+
+        if (chainInfo) {
+          const selectedAddress = (
+            await injectedKeplr.getKey(this._currentChainId)
+          ).ethereumHexAddress;
+          this._handleAccountsChanged(selectedAddress);
+        }
+      }
+    });
+
+    window.addEventListener("keplr_chainChanged", (event) => {
+      const origin = (event as CustomEvent).detail.origin;
+
+      if (origin === window.location.origin) {
+        const evmChainId = (event as CustomEvent).detail.evmChainId;
+        this._handleChainChanged(evmChainId);
+      }
+    });
+
+    window.addEventListener("keplr_ethSubscription", (event: Event) => {
+      const origin = (event as CustomEvent).detail.origin;
+      const providerId = (event as CustomEvent).detail.providerId;
+
+      if (
+        origin === window.location.origin &&
+        providerId === this.eip6963ProviderInfo?.uuid
+      ) {
+        const data = (event as CustomEvent).detail.data;
+        this.emit("message", {
+          type: "eth_subscription",
+          data,
+        });
+      }
+    });
+
+    if (this.eip6963ProviderInfo) {
+      const announceEvent = new CustomEvent<EIP6963ProviderDetail>(
+        EIP6963EventNames.Announce,
+        {
+          detail: Object.freeze({
+            info: this.eip6963ProviderInfo,
+            provider: this,
+          }),
+        }
+      );
+      window.addEventListener(EIP6963EventNames.Request, () =>
+        window.dispatchEvent(announceEvent)
+      );
+      window.dispatchEvent(announceEvent);
+    }
+  }
+
+  protected _requestMethod = async (
+    method: keyof IEthereumProvider,
+    args: Record<string, any>
+  ): Promise<any> => {
+    const bytes = new Uint8Array(8);
+    const id: string = Array.from(crypto.getRandomValues(bytes))
+      .map((value) => {
+        return value.toString(16);
+      })
+      .join("");
+
+    const proxyMessage: ProxyRequest = {
+      type: "proxy-request",
+      id,
+      method: "ethereum",
+      args: JSONUint8Array.wrap(args),
+      ethereumProviderMethod: method,
+    };
+
+    return new Promise((resolve, reject) => {
+      const receiveResponse = (e: any) => {
+        const proxyResponse: ProxyRequestResponse = this.parseMessage
+          ? this.parseMessage(e.data)
+          : e.data;
+
+        if (!proxyResponse || proxyResponse.type !== "proxy-request-response") {
+          return;
+        }
+
+        if (proxyResponse.id !== id) {
+          return;
+        }
+
+        this.eventListener.removeMessageListener(receiveResponse);
+
+        const result = JSONUint8Array.unwrap(proxyResponse.result);
+
+        if (!result) {
+          reject(new Error("Result is null"));
+          return;
+        }
+
+        if (result.error) {
+          const error = result.error;
+          reject(
+            error.code && !error.module
+              ? new EthereumProviderRpcError(
+                  error.code,
+                  error.message,
+                  error.data
+                )
+              : new Error(error)
+          );
+          return;
+        }
+
+        resolve(result.return);
+      };
+
+      this.eventListener.addMessageListener(receiveResponse);
+
+      this.eventListener.postMessage(proxyMessage);
+    });
+  };
+
+  protected _initProviderState = async () => {
+    const initialProviderState = await this._requestMethod("request", {
+      method: "keplr_initProviderState",
+    });
+
+    if (initialProviderState) {
+      const { currentEvmChainId, currentChainId, selectedAddress } =
+        initialProviderState;
+
+      if (
+        currentChainId != null &&
+        currentEvmChainId != null &&
+        selectedAddress != null
+      ) {
+        this._handleConnect(currentEvmChainId);
+        this._handleChainChanged(currentEvmChainId);
+        this._currentChainId = currentChainId;
+        this._handleAccountsChanged(selectedAddress);
+      }
+    }
+  };
+
+  protected _handleConnect = async (evmChainId: number) => {
+    if (!this._isConnected) {
+      this._isConnected = true;
+
+      const evmChainIdHexString = `0x${evmChainId.toString(16)}`;
+
+      this.emit("connect", { chainId: evmChainIdHexString });
+    }
+  };
+
+  protected _handleDisconnect = async () => {
+    if (this._isConnected) {
+      await this._requestMethod("request", {
+        method: "keplr_disconnect",
+      });
+
+      this._isConnected = false;
+      this.chainId = null;
+      this.selectedAddress = null;
+      this.networkVersion = null;
+
+      this.emit("disconnect");
+    }
+  };
+
+  protected _handleChainChanged = async (evmChainId: number) => {
+    const evmChainIdHexString = `0x${evmChainId.toString(16)}`;
+    if (evmChainIdHexString !== this.chainId) {
+      this.chainId = evmChainIdHexString;
+      this.networkVersion = evmChainId.toString(10);
+
+      this.emit("chainChanged", evmChainIdHexString);
+    }
+  };
+
+  protected _handleAccountsChanged = async (selectedAddress: string) => {
+    if (this.selectedAddress !== selectedAddress) {
+      this.selectedAddress = selectedAddress;
+
+      this.emit("accountsChanged", [selectedAddress]);
+    }
+  };
+
+  isConnected(): boolean {
+    return this._isConnected;
+  }
+
+  request = async <T = unknown>({
+    method,
+    params,
+    chainId,
+  }: {
+    method: string;
+    params?: readonly unknown[] | Record<string, unknown>;
+    chainId?: string;
+  }): Promise<T> => {
+    if (typeof method !== "string") {
+      throw new Error("Invalid paramater: `method` must be a string");
+    }
+
+    if (!this._isConnected) {
+      await this._initProviderState();
+    }
+
+    if (method === "eth_accounts") {
+      return (this.selectedAddress ? [this.selectedAddress] : []) as T;
+    }
+
+    return await this._requestMethod("request", {
+      method,
+      params,
+      providerId: this.eip6963ProviderInfo?.uuid,
+      chainId,
+    });
+  };
+
+  enable = async (): Promise<string[]> => {
+    return (await this.request({
+      method: "eth_requestAccounts",
+    })) as string[];
+  };
+
+  net_version = async (): Promise<string> => {
+    return (await this.request({
+      method: "net_version",
+    })) as string;
+  };
 }

@@ -28,6 +28,7 @@ import {
   NewMnemonicKeyMsg,
   NewPrivateKeyKeyMsg,
   PlainObject,
+  SearchKeyRingsMsg,
   SelectKeyRingMsg,
   ShowSensitiveKeyRingDataMsg,
   UnlockKeyRingMsg,
@@ -322,6 +323,26 @@ export class KeyRingStore {
   }
 
   @flow
+  *unlockWithoutSyncStatus(password: string) {
+    if (this._needMigration) {
+      this._isMigrating = true;
+    }
+
+    try {
+      const msg = new UnlockKeyRingMsg(password);
+      const result = yield* toGenerator(
+        this.requester.sendMessage(BACKGROUND_PORT, msg)
+      );
+      this._keyInfos = result.keyInfos;
+
+      this._needMigration = false;
+    } finally {
+      // Set the flag to false even if the migration is failed.
+      this._isMigrating = false;
+    }
+  }
+
+  @flow
   *changeKeyRingName(vaultId: string, name: string) {
     const msg = new ChangeKeyRingNameMsg(vaultId, name);
     const result = yield* toGenerator(
@@ -362,6 +383,11 @@ export class KeyRingStore {
 
   async checkPassword(password: string): Promise<boolean> {
     const msg = new CheckPasswordMsg(password);
+    return await this.requester.sendMessage(BACKGROUND_PORT, msg);
+  }
+
+  async searchKeyRings(searchText: string): Promise<KeyInfo[]> {
+    const msg = new SearchKeyRingsMsg(searchText);
     return await this.requester.sendMessage(BACKGROUND_PORT, msg);
   }
 }

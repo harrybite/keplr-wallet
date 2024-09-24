@@ -6,6 +6,7 @@ import {
   Message,
 } from "@keplr-wallet/router";
 import {
+  GetIsLockedMsg,
   ChangeKeyRingNameMsg,
   DeleteKeyRingMsg,
   FinalizeKeyCoinTypeMsg,
@@ -28,6 +29,7 @@ import {
   GetLegacyKeyRingInfosMsg,
   ShowSensitiveLegacyKeyRingDataMsg,
   ExportKeyRingVaultsMsg,
+  SearchKeyRingsMsg,
 } from "./messages";
 import { KeyRingService } from "./service";
 
@@ -36,6 +38,8 @@ export const getHandler: (service: KeyRingService) => Handler = (
 ) => {
   return (env: Env, msg: Message<unknown>) => {
     switch (msg.constructor) {
+      case GetIsLockedMsg:
+        return handleGetIsLockedMsg(service)(env, msg as GetIsLockedMsg);
       case GetKeyRingStatusMsg:
         return handleGetKeyRingStatusMsg(service)(
           env,
@@ -122,9 +126,19 @@ export const getHandler: (service: KeyRingService) => Handler = (
           env,
           msg as ExportKeyRingVaultsMsg
         );
+      case SearchKeyRingsMsg:
+        return handleSearchKeyRingsMsg(service)(env, msg as SearchKeyRingsMsg);
       default:
         throw new KeplrError("keyring", 221, "Unknown msg type");
     }
+  };
+};
+
+const handleGetIsLockedMsg: (
+  service: KeyRingService
+) => InternalHandler<GetIsLockedMsg> = (service) => {
+  return () => {
+    return service.keyRingStatus === "locked";
   };
 };
 
@@ -390,5 +404,13 @@ const handleExportKeyRingVaultsMsg: (
 ) => InternalHandler<ExportKeyRingVaultsMsg> = (service) => {
   return async (_, msg) => {
     return await service.exportKeyRingVaults(msg.password);
+  };
+};
+
+const handleSearchKeyRingsMsg: (
+  service: KeyRingService
+) => InternalHandler<SearchKeyRingsMsg> = (service) => {
+  return (_, msg) => {
+    return service.searchKeyRings(msg.searchText);
   };
 };

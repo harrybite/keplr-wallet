@@ -1,6 +1,7 @@
 import { Router } from "@keplr-wallet/router";
 import { KeyRingService } from "./service";
 import {
+  GetIsLockedMsg,
   GetKeyRingStatusMsg,
   GetKeyRingStatusOnlyMsg,
   FinalizeKeyCoinTypeMsg,
@@ -23,11 +24,13 @@ import {
   GetLegacyKeyRingInfosMsg,
   ShowSensitiveLegacyKeyRingDataMsg,
   ExportKeyRingVaultsMsg,
+  SearchKeyRingsMsg,
 } from "./messages";
 import { ROUTE } from "./constants";
 import { getHandler } from "./handler";
 
 export function init(router: Router, service: KeyRingService): void {
+  router.registerMessage(GetIsLockedMsg);
   router.registerMessage(GetKeyRingStatusMsg);
   router.registerMessage(GetKeyRingStatusOnlyMsg);
   router.registerMessage(SelectKeyRingMsg);
@@ -50,6 +53,7 @@ export function init(router: Router, service: KeyRingService): void {
   router.registerMessage(GetLegacyKeyRingInfosMsg);
   router.registerMessage(ShowSensitiveLegacyKeyRingDataMsg);
   router.registerMessage(ExportKeyRingVaultsMsg);
+  router.registerMessage(SearchKeyRingsMsg);
 
   router.addHandler(ROUTE, getHandler(service));
 }

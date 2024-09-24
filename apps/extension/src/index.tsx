@@ -11,9 +11,13 @@ require("./public/assets/logo-beta-256.png");
 require("./public/assets/icon/icon-beta-16.png");
 require("./public/assets/icon/icon-beta-48.png");
 require("./public/assets/icon/icon-beta-128.png");
+require("./public/assets/svg/megaphone.svg");
+require("./public/assets/img/locked-keplr-logo-128.png");
+require("./public/assets/icon-click-cursor.png");
 
 import React, {
   FunctionComponent,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -22,7 +26,12 @@ import React, {
 import ReactDOM from "react-dom";
 import { HashRouter, Route, Routes, useLocation } from "react-router-dom";
 import { StoreProvider, useStore } from "./stores";
-import { GlobalPopupStyle, GlobalStyle, ScrollBarStyle } from "./styles";
+import {
+  GlobalPopupStyle,
+  GlobalSidePanelStyle,
+  GlobalStyle,
+  ScrollBarStyle,
+} from "./styles";
 import { configure } from "mobx";
 import { observer } from "mobx-react-lite";
 import { Keplr } from "@keplr-wallet/provider";
@@ -89,6 +98,7 @@ import { IBCSwapDestinationSelectAssetPage } from "./pages/ibc-swap/select-asset
 import { RoutePageAnalytics } from "./route-page-analytics";
 import { useIntl } from "react-intl";
 import { ActivitiesPage } from "./pages/activities";
+import { isRunningInSidePanel } from "./utils";
 
 configure({
   enforceActions: "always", // Make mobx to strict mode.
@@ -100,39 +110,13 @@ window.keplr = new Keplr(
   new InExtensionMessageRequester()
 );
 
-const useIsURLUnlockPage = () => {
-  const [value, setValue] = useState(() => {
-    return (
-      window.location.hash === "#/unlock" ||
-      window.location.hash.startsWith("#/unlock?")
-    );
-  });
-
-  useLayoutEffect(() => {
-    const handler = () => {
-      const v =
-        window.location.hash === "#/unlock" ||
-        window.location.hash.startsWith("#/unlock?");
-
-      setValue(v);
-    };
-
-    window.addEventListener("locationchange", handler);
-
-    return () => {
-      window.removeEventListener("locationchange", handler);
-    };
-  }, []);
-
-  return value;
-};
-
 const RoutesAfterReady: FunctionComponent = observer(() => {
   const {
     chainStore,
     accountStore,
     keyRingStore,
     tokenFactoryRegistrar,
+    erc20CurrencyRegistrar,
     ibcCurrencyRegistrar,
     lsmCurrencyRegistrar,
     ibcChannelStore,
@@ -140,6 +124,7 @@ const RoutesAfterReady: FunctionComponent = observer(() => {
     axelarEVMBridgeCurrencyRegistrar,
     priceStore,
     price24HChangesStore,
+    interactionStore,
     uiConfigStore,
   } = useStore();
 
@@ -147,7 +132,6 @@ const RoutesAfterReady: FunctionComponent = observer(() => {
 
   useAutoLockMonitoring();
 
-  const isURLUnlockPage = useIsURLUnlockPage();
   const openRegisterOnce = useRef(false);
   const initAccountsOnce = useRef(false);
 
@@ -177,10 +161,6 @@ const RoutesAfterReady: FunctionComponent = observer(() => {
 
     if (chainStore.isInitializing) {
       return false;
-    }
-
-    if (isURLUnlockPage) {
-      return true;
     }
 
     if (keyRingStore.status === "unlocked") {
@@ -239,31 +219,56 @@ const RoutesAfterReady: FunctionComponent = observer(() => {
       return false;
     }
 
+    if (!interactionStore.isInitialized) {
+      return false;
+    }
+
+    if (!erc20CurrencyRegistrar.isInitialized) {
+      return false;
+    }
+
     return true;
   }, [
     keyRingStore.status,
     isFontLoaded,
     chainStore.isInitializing,
     chainStore.chainInfos,
-    isURLUnlockPage,
+    tokenFactoryRegistrar.isInitialized,
+    erc20CurrencyRegistrar.isInitialized,
     ibcCurrencyRegistrar.isInitialized,
     lsmCurrencyRegistrar.isInitialized,
     priceStore.isInitialized,
+    price24HChangesStore.isInitialized,
     uiConfigStore.isInitialized,
     uiConfigStore.isDeveloper,
     gravityBridgeCurrencyRegistrar.isInitialized,
     axelarEVMBridgeCurrencyRegistrar.isInitialized,
+    interactionStore.isInitialized,
     accountStore,
     ibcChannelStore.isInitialized,
   ]);
 
+  const checkIsStartFromInteractionWithSidePanelEnabledOnce = useRef(false);
+  const hasBeenReady = useRef(false);
+
   const isReady: boolean = (() => {
+    if (hasBeenReady.current) {
+      // 이미 ready 상태가 한번 되었다면 계속 강제로 ready 상태를 유지한다.
+      return true;
+    }
+
     if (!_isReady) {
       return false;
     }
 
-    if (isURLUnlockPage) {
-      return true;
+    if (!checkIsStartFromInteractionWithSidePanelEnabledOnce.current) {
+      checkIsStartFromInteractionWithSidePanelEnabledOnce.current = true;
+      // side panel에서 돌아가고 있으면서 최초의 isReady 상태일때 interaction이 있었는지 확인한다.
+      // 만약 내부의 interaction이라면 UI가 보이기도 전에 뭔가가 요청됐을리가 없으므로
+      // 최초로 interaction을 가지고 시작했다면 외부의 요청에 의한 interaction이다.
+      if (isRunningInSidePanel() && interactionStore.data.length !== 0) {
+        window.isStartFromInteractionWithSidePanelEnabled = true;
+      }
     }
 
     if (keyRingStore.status === "unlocked") {
@@ -279,14 +284,46 @@ const RoutesAfterReady: FunctionComponent = observer(() => {
       }
     }
 
+    hasBeenReady.current = true;
     return true;
   })();
 
-  const shouldUnlockPage = keyRingStore.status === "locked" && !isURLUnlockPage;
+  const shouldUnlockPage = keyRingStore.status === "locked";
 
   const [mainPageIsNotReady, setMainPageIsNotReady] = useState(false);
 
   const intl = useIntl();
+
+  // Enable new EVM chains by default for a specific version.
+  useEffect(() => {
+    const newEVMChainsEnabledLocalStorageKey = "new-evm-chain-enabled";
+    const newEVMChainsEnabled = localStorage.getItem(
+      newEVMChainsEnabledLocalStorageKey
+    );
+    if (
+      isReady &&
+      newEVMChainsEnabled !== "true" &&
+      uiConfigStore.changelogConfig.showingInfo.some(
+        (info) => info.version === "0.12.115"
+      )
+    ) {
+      for (const keyInfo of keyRingStore.keyInfos) {
+        chainStore.enableChainInfoInUIWithVaultId(
+          keyInfo.id,
+          ...chainStore.chainInfos
+            .filter((chainInfo) => chainInfo.chainId.startsWith("eip155:"))
+            .map((chainInfo) => chainInfo.chainId)
+        );
+      }
+      localStorage.setItem(newEVMChainsEnabledLocalStorageKey, "true");
+    }
+  }, [
+    chainStore,
+    isReady,
+    keyRingStore.keyInfos,
+    uiConfigStore.changelogConfig.showingInfo,
+    uiConfigStore.newChainSuggestionConfig.newSuggestionChains,
+  ]);
 
   return (
     <HashRouter>
@@ -494,7 +531,15 @@ const App: FunctionComponent = () => {
             <ConfirmProvider>
               <NotificationProvider>
                 <GlobalStyle />
-                <GlobalPopupStyle />
+                {
+                  // isRunningInSidePanel()은 반응형이 아니지만 어차피 popup <-> sidePanel은 실행시점에 정해지고
+                  // UI가 작동중에 변경될 수 없기 때문에 이렇게 해도 괜찮다.
+                  isRunningInSidePanel() ? (
+                    <GlobalSidePanelStyle />
+                  ) : (
+                    <GlobalPopupStyle />
+                  )
+                }
                 <ScrollBarStyle />
                 <ErrorBoundary>
                   <RoutesAfterReady />

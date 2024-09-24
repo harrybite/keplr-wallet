@@ -26,6 +26,8 @@ import * as KeyRingEthereum from "./keyring-ethereum/internal";
 import * as PermissionInteractive from "./permission-interactive/internal";
 import * as TokenScan from "./token-scan/internal";
 import * as RecentSendHistory from "./recent-send-history/internal";
+import * as SidePanel from "./side-panel/internal";
+import * as Settings from "./settings/internal";
 
 export * from "./chains";
 export * from "./chains-ui";
@@ -47,6 +49,8 @@ export * from "./keyring-ethereum";
 export * from "./keyring-keystone";
 export * from "./token-scan";
 export * from "./recent-send-history";
+export * from "./side-panel";
+export * from "./settings";
 
 import { KVStore } from "@keplr-wallet/common";
 import { ChainInfo } from "@keplr-wallet/types";
@@ -58,11 +62,13 @@ export function init(
   storeCreator: (prefix: string) => KVStore,
   // Message requester to the content script.
   eventMsgRequester: MessageRequester,
+  extensionMessageRequesterToUI: MessageRequester | undefined,
   embedChainInfos: ChainInfo[],
   // The origins that are able to pass any permission.
   privilegedOrigins: string[],
   analyticsPrivilegedOrigins: string[],
   msgPrivilegedOrigins: string[],
+  suggestChainPrivilegedOrigins: string[],
   communityChainInfoRepo: {
     readonly organizationName: string;
     readonly repoName: string;
@@ -81,10 +87,11 @@ export function init(
     mobileOS: string;
   },
   disableUpdateLoop: boolean,
-  afterInitFn?: (
+  chainsAfterInitFn?: (
     service: Chains.ChainsService,
     lastEmbedChainInfos: ChainInfoWithCoreTypes[]
-  ) => void | Promise<void>
+  ) => void | Promise<void>,
+  vaultAfterInitFn?: (service: Vault.VaultService) => void | Promise<void>
 ): {
   initFn: () => Promise<void>;
   keyRingService: KeyRingV2.KeyRingService;
@@ -96,8 +103,15 @@ export function init(
     analyticsOptions
   );
 
+  const sidePanelService = new SidePanel.SidePanelService(
+    storeCreator("side-panel"),
+    analyticsService
+  );
+
   const interactionService = new Interaction.InteractionService(
-    eventMsgRequester
+    eventMsgRequester,
+    sidePanelService,
+    extensionMessageRequesterToUI
   );
 
   const chainsService = new Chains.ChainsService(
@@ -107,10 +121,11 @@ export function init(
       updaterKVStore: storeCreator("updator"),
     },
     embedChainInfos,
+    suggestChainPrivilegedOrigins,
     communityChainInfoRepo,
     analyticsService,
     interactionService,
-    afterInitFn
+    chainsAfterInitFn
   );
 
   const tokenCW20Service = new TokenCW20.TokenCW20Service(
@@ -174,6 +189,7 @@ export function init(
       chainsUIService,
     },
     chainsService,
+    chainsUIService,
     interactionService,
     vaultService,
     analyticsService,
@@ -197,7 +213,10 @@ export function init(
     keyRingV2Service,
     keyRingCosmosService,
     interactionService,
-    analyticsService
+    analyticsService,
+    permissionService,
+    backgroundTxEthereumService,
+    tokenERC20Service
   );
   const autoLockAccountService = new AutoLocker.AutoLockAccountService(
     storeCreator("auto-lock-account"),
@@ -206,8 +225,10 @@ export function init(
   );
   const permissionInteractiveService =
     new PermissionInteractive.PermissionInteractiveService(
+      storeCreator("permission-interactive"),
       permissionService,
-      keyRingV2Service
+      keyRingV2Service,
+      chainsService
     );
 
   const chainsUpdateService = new ChainsUpdate.ChainsUpdateService(
@@ -239,6 +260,10 @@ export function init(
       backgroundTxService,
       notification
     );
+
+  const settingsService = new Settings.SettingsService(
+    storeCreator("settings")
+  );
 
   Interaction.init(router, interactionService);
   Permission.init(router, permissionService);
@@ -281,10 +306,14 @@ export function init(
   SecretWasm.init(router, secretWasmService, permissionInteractiveService);
   TokenScan.init(router, tokenScanService);
   RecentSendHistory.init(router, recentSendHistoryService);
+  SidePanel.init(router, sidePanelService);
+  Settings.init(router, settingsService);
 
   return {
     initFn: async () => {
       await analyticsService.init();
+      await sidePanelService.init();
+      await interactionService.init();
 
       await chainsService.init();
       await vaultService.init();
@@ -308,7 +337,11 @@ export function init(
       await tokenScanService.init();
 
       await recentSendHistoryService.init();
+      await settingsService.init();
 
+      if (vaultAfterInitFn) {
+        await vaultAfterInitFn(vaultService);
+      }
       await chainsService.afterInit();
     },
     keyRingService: keyRingV2Service,

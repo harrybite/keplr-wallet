@@ -2,12 +2,17 @@
 import { FiatCurrency } from "@keplr-wallet/types";
 
 export const HelpDeskUrl = "https://help.keplr.app";
+export const TermsOfUseUrl = "https://terms-of-use.keplr.app";
 
 export const CoinGeckoAPIEndPoint =
   process.env["KEPLR_EXT_COINGECKO_ENDPOINT"] ||
   "https://api.coingecko.com/api/v3";
 export const CoinGeckoGetPrice =
   process.env["KEPLR_EXT_COINGECKO_GETPRICE"] || "/simple/price";
+export const CoinGeckoCoinDataByTokenAddress =
+  process.env["KEPLR_EXT_COINGECKO_COIN_DATA_BY_TOKEN_ADDRESS"] ||
+  "/coins/{coingeckoChainId}/contract/{contractAddress}";
+
 export const AutoFetchingFiatValueInterval = 300 * 1000; // 5min
 
 export const AutoFetchingAssetsInterval = 15 * 1000; // 15sec
@@ -116,6 +121,10 @@ export const ICNSInfo = {
     "osmo1xk0s8xgktn9x5vwcgtjdxqzadg88fgn33p8u9cnpdxwemvxscvast52cdd",
 };
 
+export const ENSInfo = {
+  chainId: "eip155:1",
+};
+
 export interface FiatOnRampServiceInfo {
   serviceId: string;
   serviceName: string;
@@ -170,6 +179,6 @@ export const SwapVenue: {
   chainId: "osmosis-1",
 };
 export const SwapFeeBps = {
-  value: 0,
+  value: 75,
   receiver: "osmo1my4tk420gjmhggqwvvha6ey9390gqwfree2p4u",
 };

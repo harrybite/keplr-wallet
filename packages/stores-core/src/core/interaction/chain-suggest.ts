@@ -42,13 +42,23 @@ export class ChainSuggestStore {
     }
   }
 
+  get waitingSuggestedChainInfos() {
+    return this.interactionStore.getAllData<{
+      chainInfo: ChainInfo;
+      origin: string;
+    }>(SuggestChainInfoMsg.type());
+  }
+
   get communityChainInfoRepoUrl(): string {
     return `https://github.com/${this.communityChainInfoRepo.organizationName}/${this.communityChainInfoRepo.repoName}`;
   }
 
   getCommunityChainInfoUrl(chainId: string): string {
+    const isEvmOnlyChain = chainId.startsWith("eip155:");
     const chainIdHelper = ChainIdHelper.parse(chainId);
-    return `${this.communityChainInfoRepoUrl}/blob/${this.communityChainInfoRepo.branchName}/cosmos/${chainIdHelper.identifier}.json`;
+    return `${this.communityChainInfoRepoUrl}/blob/${
+      this.communityChainInfoRepo.branchName
+    }/${isEvmOnlyChain ? "evm" : "cosmos"}/${chainIdHelper.identifier}.json`;
   }
 
   getCommunityChainInfo(chainId: string): {
@@ -77,16 +87,42 @@ export class ChainSuggestStore {
     });
 
     try {
+      const isEvmOnlyChain = chainId.startsWith("eip155:");
       const response = yield* toGenerator(
-        simpleFetch<ChainInfo>(
+        simpleFetch<
+          (Omit<ChainInfo, "rest"> & { websocket: string }) | ChainInfo
+        >(
           this.communityChainInfoRepo.alternativeURL
-            ? this.communityChainInfoRepo.alternativeURL.replace(
-                "{chain_identifier}",
-                chainIdentifier
-              )
-            : `https://raw.githubusercontent.com/${this.communityChainInfoRepo.organizationName}/${this.communityChainInfoRepo.repoName}/${this.communityChainInfoRepo.branchName}/cosmos/${chainIdentifier}.json`
+            ? this.communityChainInfoRepo.alternativeURL
+                .replace("{chain_identifier}", chainIdentifier)
+                .replace("/cosmos/", isEvmOnlyChain ? "/evm/" : "/cosmos/")
+            : `https://raw.githubusercontent.com/${
+                this.communityChainInfoRepo.organizationName
+              }/${this.communityChainInfoRepo.repoName}/${
+                this.communityChainInfoRepo.branchName
+              }/${isEvmOnlyChain ? "evm" : "cosmos"}/${chainIdentifier}.json`
         )
       );
+      const chainInfo: ChainInfo =
+        "rest" in response.data && !isEvmOnlyChain
+          ? response.data
+          : {
+              ...response.data,
+              rest: response.data.rpc,
+              evm: {
+                chainId: parseInt(
+                  response.data.chainId.replace("eip155:", ""),
+                  10
+                ),
+                rpc: response.data.rpc,
+                ...("websocket" in response.data && {
+                  websocket: response.data.websocket,
+                }),
+              },
+              features: ["eth-address-gen", "eth-key-sign"].concat(
+                response.data.features ?? []
+              ),
+            };
 
       if (
         ChainIdHelper.parse(response.data.chainId).identifier !==
@@ -101,7 +137,7 @@ export class ChainSuggestStore {
 
       this.communityChainInfo.set(chainIdentifier, {
         isLoading: false,
-        chainInfo: response.data,
+        chainInfo,
       });
     } catch (e) {
       console.log(e);
@@ -113,12 +149,12 @@ export class ChainSuggestStore {
   }
 
   async approveWithProceedNext(
-    id: string,
+    ids: string | string[],
     chainInfo: ChainInfoWithSuggestedOptions,
     afterFn: (proceedNext: boolean) => void | Promise<void>
   ) {
     await this.interactionStore.approveWithProceedNextV2(
-      id,
+      ids,
       chainInfo,
       afterFn
     );

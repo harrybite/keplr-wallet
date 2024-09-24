@@ -168,6 +168,7 @@ module.exports = {
       KEPLR_EXT_ANALYTICS_API_URL: "",
       KEPLR_EXT_COINGECKO_ENDPOINT: "",
       KEPLR_EXT_COINGECKO_GETPRICE: "",
+      KEPLR_EXT_COINGECKO_COIN_DATA_BY_TOKEN_ADDRESS: "",
       KEPLR_EXT_TRANSAK_API_KEY: "",
       KEPLR_EXT_MOONPAY_API_KEY: "",
       KEPLR_EXT_KADO_API_KEY: "",
@@ -179,6 +180,13 @@ module.exports = {
       KEPLR_EXT_TX_HISTORY_BASE_URL: "",
       KEPLR_EXT_CONFIG_SERVER: "",
       WC_PROJECT_ID: "",
+      KEPLR_EXT_EIP6963_PROVIDER_INFO_NAME: "Keplr",
+      KEPLR_EXT_EIP6963_PROVIDER_INFO_RDNS: "app.keplr",
+      KEPLR_EXT_EIP6963_PROVIDER_INFO_ICON: `data:image/png;base64,${fs.readFileSync(
+        "src/public/assets/icon/icon-128.png",
+        "base64"
+      )}`,
+      SKIP_API_KEY: "",
     }),
     new ForkTsCheckerWebpackPlugin(),
     new CopyWebpackPlugin({
@@ -206,9 +214,17 @@ module.exports = {
         },
       ],
     }),
+    // popup.html과 sidePanel.html은 사실 동일하다.
+    // 단지 popup에서 실행되었는지 sidePanel에서 실행되었는지를
+    // js에서 파일 이름으로 알아내기 위해서 분리했다.
     new HtmlWebpackPlugin({
       template: "./src/index.html",
       filename: "popup.html",
+      chunks: ["popup"],
+    }),
+    new HtmlWebpackPlugin({
+      template: "./src/index.html",
+      filename: "sidePanel.html",
       chunks: ["popup"],
     }),
     new HtmlWebpackPlugin({

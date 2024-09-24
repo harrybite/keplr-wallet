@@ -17,6 +17,7 @@ import {
   SecretUtils,
   SettledResponses,
   DirectAuxSignResponse,
+  IEthereumProvider,
 } from "@keplr-wallet/types";
 import {
   Bech32Address,
@@ -30,6 +31,7 @@ import {
 import { Hash, Mnemonic, PrivKeySecp256k1 } from "@keplr-wallet/crypto";
 import Long from "long";
 import { SignDoc } from "@keplr-wallet/proto-types/cosmos/tx/v1beta1/tx";
+import EventEmitter from "events";
 
 export class MockKeplr implements Keplr {
   readonly version: string = "0.0.1";
@@ -75,6 +77,11 @@ export class MockKeplr implements Keplr {
     public readonly mnemonic: string
   ) {}
 
+  ping(): Promise<void> {
+    // noop.
+    return Promise.resolve();
+  }
+
   enable(): Promise<void> {
     // noop.
     return Promise.resolve(undefined);
@@ -111,9 +118,12 @@ export class MockKeplr implements Keplr {
       bech32Address: new Bech32Address(
         wallet.getPubKey().getCosmosAddress()
       ).toBech32(
-        this.chainInfos.find((c) => c.chainId === chainId)!.bech32Config
-          .bech32PrefixAccAddr
+        this.chainInfos.find((c) => c.chainId === chainId)?.bech32Config
+          ?.bech32PrefixAccAddr ?? ""
       ),
+      ethereumHexAddress: new Bech32Address(
+        wallet.getPubKey().getCosmosAddress()
+      ).toHex(true),
       isNanoLedger: false,
       isKeystone: false,
     };
@@ -136,6 +146,9 @@ export class MockKeplr implements Keplr {
             this.chainInfos.find((c) => c.chainId === chainId)!.bech32Config
               .bech32PrefixAccAddr
           ),
+          ethereumHexAddress: new Bech32Address(
+            wallet.getPubKey().getCosmosAddress()
+          ).toHex(true),
           isNanoLedger: false,
           isKeystone: false,
         },
@@ -350,6 +363,12 @@ export class MockKeplr implements Keplr {
     throw new Error("Not yet implemented");
   }
 
+  getChainInfoWithoutEndpoints(
+    _chainId: string
+  ): Promise<ChainInfoWithoutEndpoints> {
+    throw new Error("Not yet implemented");
+  }
+
   disable(_chainIds?: string | string[]): Promise<void> {
     throw new Error("Not yet implemented");
   }
@@ -367,5 +386,40 @@ export class MockKeplr implements Keplr {
 
   suggestERC20(_chainId: string, _contractAddress: string): Promise<void> {
     throw new Error("Not yet implemented");
+  }
+
+  public readonly ethereum = new MockEthereumProvider();
+}
+
+class MockEthereumProvider extends EventEmitter implements IEthereumProvider {
+  readonly chainId: string | null = null;
+  readonly selectedAddress: string | null = null;
+
+  readonly networkVersion: string | null = null;
+
+  readonly isKeplr: boolean = true;
+  readonly isMetaMask: boolean = true;
+
+  constructor() {
+    super();
+  }
+
+  isConnected(): boolean {
+    throw new Error("Method not implemented.");
+  }
+
+  request<T>({}: {
+    method: string;
+    params?: unknown[] | Record<string, unknown>;
+  }): Promise<T> {
+    throw new Error("Not yet implemented");
+  }
+
+  enable(): Promise<string[]> {
+    throw new Error("Method not implemented.");
+  }
+
+  net_version(): Promise<string> {
+    throw new Error("Method not implemented.");
   }
 }
